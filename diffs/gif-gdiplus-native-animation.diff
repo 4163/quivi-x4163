@@ -1,0 +1,184 @@
+GIF GDI+ native animation diff
+Generated: 2026-06-12T13:05:21.232206
+
+Changed artifact: library.zip
+Old archive: backups\library.zip.before-gif-gdiplus-animation.20260612-124306.bak
+New archive: library.zip
+
+Archive hashes:
+old d923561e7a6e8f3a37e8c0eb8073d88684030610ffea66f6b295cfd4fba1886a  backups\library.zip.before-gif-gdiplus-animation.20260612-124306.bak
+new b1f8cf73c59ff243ce463c97386bc9182964c38f08a2b379923939db49307468  library.zip
+
+Entry hashes:
+old fb2979bff9c81e69dab6ed6c81061331baff8098c2b5bad348c60bfe8218619a  pyfreeimage/image.pyc
+new fb2979bff9c81e69dab6ed6c81061331baff8098c2b5bad348c60bfe8218619a  pyfreeimage/image.pyc
+old d57423e6bc32d72463e208e3fdb8347853b7757afc6b11a45c94d3d8cf5f0ad2  quivilib/model/image/freeimage.pyc
+new d57423e6bc32d72463e208e3fdb8347853b7757afc6b11a45c94d3d8cf5f0ad2  quivilib/model/image/freeimage.pyc
+old e29c68d885c45d83ab3fbcd0cb7f323aaaf4785587fe11c9b51ece739ce8488f  quivilib/model/image/gdiplus.pyc
+new c0360625a9288f66292073724f1536cc50e38c3da985b3319c5ab3437014ee90  quivilib/model/image/gdiplus.pyc
+old bbf9fa797239a7fca3ab3f852db7621b325d87f6c09b2c2fe3bc7945a401262d  quivilib/model/image/__init__.pyc
+new 35ee0e9f940499e34df1261b38b16554303be5400fe4e9e8da81ae946ce30bce  quivilib/model/image/__init__.pyc
+old 094df55cc21b2f02cbb58e072aa00dc84a2088cd519c8424ef1b58edaab3e725  quivilib/control/canvas.pyc
+new 094df55cc21b2f02cbb58e072aa00dc84a2088cd519c8424ef1b58edaab3e725  quivilib/control/canvas.pyc
+
+Summary:
+- GDI+ backend now supports animated GIF frame count, delays, and SelectActiveFrame
+- GIF dispatcher now prefers GdiPlusImage with FreeImage fallback
+- Animated GDI+ images skip cached resize bitmaps so frame changes remain visible
+
+Verification:
+- GDI+ benchmark on largest real GIFs: SELECT10 about 0.25-0.52s versus FreeImage about 4-9s
+- zipimport test: ANIM=True, DELAY=30, SIZE=1333x2000, FRAMES=110, NEXT=30
+- Quivi GUI smoke test with copied large GIF stayed running and wrote no new quivi.exe.log
+
+Source-level diff from decompiled pyc:
+diff --git "a/.codex_tmp\\gif-gdiplus-native-animation_old_src/quivilib_model_image___init__.py" "b/.codex_tmp\\gif-gdiplus-native-animation_new_src/quivilib_model_image___init__.py"
+index 5f164df..da40716 100644
+--- "a/.codex_tmp\\gif-gdiplus-native-animation_old_src/quivilib_model_image___init__.py"
++++ "b/.codex_tmp\\gif-gdiplus-native-animation_new_src/quivilib_model_image___init__.py"
+@@ -2,7 +2,7 @@
+ # Python bytecode version base 2.6 (62161)
+ # Decompiled from: Python 3.11.1 (tags/v3.11.1:a7a450f, Dec  6 2022, 19:58:39) [MSC v.1934 64 bit (AMD64)]
+ # Embedded file name: quivilib\model\image\__init__.pyc
+-# Compiled at: 2026-06-11 22:26:38
++# Compiled at: 2026-06-12 12:58:55
+ from __future__ import absolute_import
+ from quivilib import meta
+ import logging as log, traceback, sys
+@@ -43,8 +43,8 @@ supported_extensions = get_supported_extensions()
+ def open(f, path, canvas_type, delay=False):
+     img_classes = IMG_CLASSES
+     if unicode(path).lower().endswith('.gif'):
+-        img_classes = [_[1] for cls in IMG_CLASSES if cls.__name__ == 'FreeImage']
+-        img_classes += [_[2] for cls in IMG_CLASSES if cls.__name__ != 'FreeImage']
++        img_classes = [_[1] for cls in IMG_CLASSES if cls.__name__ == 'GdiPlusImage']
++        img_classes += [_[2] for cls in IMG_CLASSES if cls.__name__ != 'GdiPlusImage']
+     for cls in img_classes:
+         try:
+             img = cls(canvas_type, f, path, delay=delay)
+diff --git "a/.codex_tmp\\gif-gdiplus-native-animation_old_src/quivilib_model_image_gdiplus.py" "b/.codex_tmp\\gif-gdiplus-native-animation_new_src/quivilib_model_image_gdiplus.py"
+index 9722454..d3510fc 100644
+--- "a/.codex_tmp\\gif-gdiplus-native-animation_old_src/quivilib_model_image_gdiplus.py"
++++ "b/.codex_tmp\\gif-gdiplus-native-animation_new_src/quivilib_model_image_gdiplus.py"
+@@ -2,7 +2,7 @@
+ # Python bytecode version base 2.6 (62161)
+ # Decompiled from: Python 3.11.1 (tags/v3.11.1:a7a450f, Dec  6 2022, 19:58:39) [MSC v.1934 64 bit (AMD64)]
+ # Embedded file name: quivilib\model\image\gdiplus.pyc
+-# Compiled at: 2010-09-03 14:54:47
++# Compiled at: 2026-06-12 13:00:11
+ from __future__ import absolute_import
+ import sys, logging, wx
+ from quivilib.util import rescale_by_size_factor
+@@ -36,6 +36,33 @@ if sys.platform == 'win32':
+     StartupInput = GdiplusStartupInput()
+     token = ctypes.c_ulong()
+     gdiplus.GdiplusStartup(ctypes.pointer(token), ctypes.pointer(StartupInput), None)
++    PROPERTY_TAG_FRAME_DELAY = 20736
++
++    class GUID(wintypes.Structure):
++        _fields_ = [
++         (
++          'Data1', ctypes.c_ulong),
++         (
++          'Data2', ctypes.c_ushort),
++         (
++          'Data3', ctypes.c_ushort),
++         (
++          'Data4', ctypes.c_ubyte * 8)]
++
++
++    FrameDimensionTime = GUID(1793965421, 16309, 16778, (ctypes.c_ubyte * 8)(131, 166, 127, 69, 34, 157, 200, 114))
++
++    class PropertyItem(wintypes.Structure):
++        _fields_ = [
++         (
++          'id', ctypes.c_uint),
++         (
++          'length', ctypes.c_uint),
++         (
++          'type', ctypes.c_ushort),
++         (
++          'value', ctypes.c_void_p)]
++
+ 
+ class _GdiPlusInnerImage(object):
+ 
+@@ -83,6 +110,9 @@ class GdiPlusImage(object):
+         self.zoomed_bmp = None
+         self.delay = delay
+         self.rotation = 0
++        self.frame_index = 0
++        self.frame_delays = self._get_frame_delays()
++        self.is_animated = len(self.frame_delays) > 1
+         return
+ 
+     @property
+@@ -116,6 +146,8 @@ class GdiPlusImage(object):
+     def resize(self, width, height):
+         if self._original_width == width and self._original_height == height:
+             self.zoomed_bmp = None
++        elif self.is_animated:
++            self.zoomed_bmp = None
+         else:
+             self.zoomed_bmp = self._resize_img(width, height)
+         self._width = width
+@@ -149,10 +181,24 @@ class GdiPlusImage(object):
+     def rotate(self, clockwise):
+         self.rotation += 1 if clockwise else -1
+         self.rotation %= 4
+-        if self.zoomed_bmp:
++        if self.zoomed_bmp and not self.is_animated:
+             self.zoomed_bmp = self._resize_img(self.width, self.height)
+         return
+ 
++    @property
++    def frame_delay(self):
++        return self.frame_delays[self.frame_index]
++
++    def advance_frame(self):
++        if not self.is_animated:
++            return 0
++        self.frame_index = (self.frame_index + 1) % len(self.frame_delays)
++        gdiplus.GdipImageSelectActiveFrame(self.img.img, ctypes.byref(FrameDimensionTime), self.frame_index)
++        return self.frame_delay
++
++    def preload_animation(self):
++        return
++
+     def paint(self, dc, x, y):
+         if self.zoomed_bmp:
+             dc.DrawBitmap(self.zoomed_bmp, x, y)
+@@ -209,6 +255,33 @@ class GdiPlusImage(object):
+         self.img = None
+         return
+ 
++    def _get_frame_delays(self):
++        count = ctypes.c_uint()
++        if gdiplus.GdipImageGetFrameCount(self.img.img, ctypes.byref(FrameDimensionTime), ctypes.byref(count)):
++            return [100]
++        if count.value <= 1:
++            return [100]
++        delays = [
++         100] * count.value
++        size = ctypes.c_uint()
++        if gdiplus.GdipGetPropertyItemSize(self.img.img, PROPERTY_TAG_FRAME_DELAY, ctypes.byref(size)) or not size.value:
++            return delays
++        buf = ctypes.create_string_buffer(size.value)
++        if gdiplus.GdipGetPropertyItem(self.img.img, PROPERTY_TAG_FRAME_DELAY, size, buf):
++            return delays
++        item = ctypes.cast(buf, ctypes.POINTER(PropertyItem)).contents
++        if not item.value:
++            return delays
++        values = ctypes.cast(item.value, ctypes.POINTER(ctypes.c_uint))
++        frame_count = min(count.value, item.length / ctypes.sizeof(ctypes.c_uint))
++        for idx in xrange(frame_count):
++            delay = int(values[idx]) * 10
++            if delay < 20:
++                delay = 100
++            delays[idx] = delay
++
++        return delays
++
+     def _get_rotated_coords(self, x, y, w, h):
+         if self.rotation == 0:
+             return (x, y, x + w, y, x, y + h)

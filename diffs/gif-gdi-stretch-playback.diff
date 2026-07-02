@@ -1,0 +1,71 @@
+GIF GDI stretch playback diff
+Generated: 2026-06-12T13:05:07.959498
+
+Changed artifact: library.zip
+Old archive: backups\library.zip.before-gif-gdi-stretch-playback.20260611-232553.bak
+New archive: backups\library.zip.before-gif-nonblocking-advance.20260611-233049.bak
+
+Archive hashes:
+old 2f59c67931d25e132ada697b0fdef889edd5c17cb9284f84c8cde8411cdbf02a  backups\library.zip.before-gif-gdi-stretch-playback.20260611-232553.bak
+new 6e5d411de067cedbc211444754cc55989c9851831b77561f0b55c09e152f54fe  backups\library.zip.before-gif-nonblocking-advance.20260611-233049.bak
+
+Entry hashes:
+old 7580a18c5d921d0fbe4c3ccf10fb27d29b941c0c66e0bb69fd7d364b4d2431de  pyfreeimage/image.pyc
+new 7580a18c5d921d0fbe4c3ccf10fb27d29b941c0c66e0bb69fd7d364b4d2431de  pyfreeimage/image.pyc
+old 1dbeefec6979e72b2ed27e3faea24ebcfbebad56dfcb44828dfc79ccb8eb2a59  quivilib/model/image/freeimage.pyc
+new dfee0e92134d25c54fcaba3da8804715d7534465e53b34c0e0b3e9da26d7f800  quivilib/model/image/freeimage.pyc
+old e29c68d885c45d83ab3fbcd0cb7f323aaaf4785587fe11c9b51ece739ce8488f  quivilib/model/image/gdiplus.pyc
+new e29c68d885c45d83ab3fbcd0cb7f323aaaf4785587fe11c9b51ece739ce8488f  quivilib/model/image/gdiplus.pyc
+old bbf9fa797239a7fca3ab3f852db7621b325d87f6c09b2c2fe3bc7945a401262d  quivilib/model/image/__init__.pyc
+new bbf9fa797239a7fca3ab3f852db7621b325d87f6c09b2c2fe3bc7945a401262d  quivilib/model/image/__init__.pyc
+old bae7209e7651c240f9f0e4c29fc128663513c7b2e351337544193b55b08cfd27  quivilib/control/canvas.pyc
+new bae7209e7651c240f9f0e4c29fc128663513c7b2e351337544193b55b08cfd27  quivilib/control/canvas.pyc
+
+Summary:
+- Animated GIF resize on Windows avoids pre-rescaling frames
+- Windows paint uses native StretchDIBits destination scaling with current frame
+
+Verification:
+- Real-folder profile showed frame scaling was a major cost before this patch
+
+Source-level diff from decompiled pyc:
+diff --git "a/.codex_tmp\\gif-gdi-stretch-playback_old_src/quivilib_model_image_freeimage.py" "b/.codex_tmp\\gif-gdi-stretch-playback_new_src/quivilib_model_image_freeimage.py"
+index 114eeb4..8b187a5 100644
+--- "a/.codex_tmp\\gif-gdi-stretch-playback_old_src/quivilib_model_image_freeimage.py"
++++ "b/.codex_tmp\\gif-gdi-stretch-playback_new_src/quivilib_model_image_freeimage.py"
+@@ -2,7 +2,7 @@
+ # Python bytecode version base 2.6 (62161)
+ # Decompiled from: Python 3.11.1 (tags/v3.11.1:a7a450f, Dec  6 2022, 19:58:39) [MSC v.1934 64 bit (AMD64)]
+ # Embedded file name: quivilib\model\image\freeimage.pyc
+-# Compiled at: 2026-06-11 23:17:06
++# Compiled at: 2026-06-11 23:26:06
+ from __future__ import absolute_import
+ from quivilib.i18n import _
+ from quivilib.util import add_exception_custom_msg
+@@ -78,6 +78,8 @@ class FreeImage(object):
+     def resize(self, width, height):
+         if self.original_width == width and self.original_height == height:
+             self.zoomed_bmp = None
++        elif sys.platform == 'win32' and self.is_animated:
++            self.zoomed_bmp = None
+         else:
+             img = self.img.rescale(width, height, fi.FILTER_BICUBIC)
+             if sys.platform != 'win32':
+@@ -89,7 +91,7 @@ class FreeImage(object):
+                 self.zoomed_bmp = img
+         self.width = width
+         self.height = height
+-        if self.is_animated and self.zoomed_bmp:
++        if self.is_animated:
+             self.preload_animation()
+         return
+ 
+@@ -151,7 +153,7 @@ class FreeImage(object):
+             hdc = dc.GetHDC()
+             img = self.zoomed_bmp if self.zoomed_bmp else self.img
+             win32gui.SetStretchBltMode(hdc, win32con.COLORONCOLOR)
+-            gdi32.StretchDIBits(hdc, x, y, img.width, img.height, 0, 0, img.width, img.height, img.bits, img.info, win32con.DIB_RGB_COLORS, win32con.SRCCOPY)
++            gdi32.StretchDIBits(hdc, x, y, self.width, self.height, 0, 0, img.width, img.height, img.bits, img.info, win32con.DIB_RGB_COLORS, win32con.SRCCOPY)
+         else:
+             bmp = self.zoomed_bmp if self.zoomed_bmp else self.bmp
+             dc.DrawBitmap(bmp, x, y)

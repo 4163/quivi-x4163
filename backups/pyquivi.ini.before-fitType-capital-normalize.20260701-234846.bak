@@ -1,0 +1,98 @@
+[Language]
+id = en_US
+
+[Shortcuts]
+5014 = 
+17008 = 
+15002 = 
+15001 = 
+17001 = 
+17003 = 
+17002 = 70,0
+17005 = 84,0
+17004 = 81,0
+17007 = 
+17006 = 89,0
+16002 = 317,0 83,0
+5006 = 
+13004 = 69,0
+13005 = 82,0
+16003 = 314,0 65,0
+13007 = 50,0
+13006 = 13,1 49,0
+13001 = 67,0
+16007 = 
+13003 = 88,0
+13002 = 90,0
+16001 = 315,0 87,0
+16008 = 
+13009 = 71,0
+13008 = 
+16004 = 316,0 68,0
+14001 = 
+14002 = 
+16005 = 
+16006 = 
+18002 = 
+11003 = 343,0 51,0
+11002 = 
+11001 = 
+12008 = 79,2
+11004 = 
+12006 = 90,2
+12007 = 
+12004 = 8,0
+12005 = 88,2
+12002 = 87,4 65,4
+12003 = 
+12001 = 83,4 68,4
+13010 = 
+13011 = 
+
+[Update]
+available = 0
+version = 
+url = 
+lastcheck = 2026-06-25 13:38
+
+[FileList]
+sortorder = 2
+
+[Window]
+filelistcolumnswidth = 274,50,120
+mainwindowheight = 806
+mainwindowfullscreen = 0
+perspective = layout2|name=file_list;caption=Files;state=2099196;dir=4;layer=1;row=0;pos=0;prop=100000;bestw=425;besth=1421;minw=-1;minh=-1;maxw=-1;maxh=-1;floatx=-1;floaty=-1;floatw=-1;floath=-1|name=content;caption=;state=768;dir=5;layer=0;row=0;pos=0;prop=100000;bestw=20;besth=20;minw=-1;minh=-1;maxw=-1;maxh=-1;floatx=-1;floaty=-1;floatw=-1;floath=-1|dock_size(5,0,0)=22|dock_size(4,1,0)=427|
+mainwindowx = 505
+mainwindowy = 0
+mainwindowmaximized = 1
+mainwindowwidth = 1440
+
+[Mouse]
+dragthreshold = 0
+rightclickcmd = 13007
+leftclickcmd = -1
+aux1clickcmd = -1
+alwaysleftmousedrag = 1
+middleclickcmd = 12001
+aux2clickcmd = -1
+
+[Options]
+placeholderseparatemenu = 0
+startdir = C:\Users\x4163\Downloads
+placeholdersingle = 0
+userighttoleft = 0
+horizontalscrollatbottom = 0
+placeholderautoopen = 1
+realfullscreen = 1
+custombackground = 0
+detectspreads = 0
+placeholderdelete = 1
+fitwidthcustomsize = 800
+autofullscreen = 1
+custombackgroundcolor = 255,128,128
+fittype = FitType.HEIGHT_IF_LARGER
+openfirst = 1
+
+[Favorites]
+

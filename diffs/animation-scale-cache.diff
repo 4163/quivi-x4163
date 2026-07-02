@@ -1,0 +1,118 @@
+Animated view/zoom scale cache
+==============================
+
+Date: 2026-07-02
+
+Purpose
+-------
+Avoid repeated animation lag when switching back to a zoom/fit/view size that
+has already been generated once.
+
+Previously, FreeImage.resize() always created a fresh scaled AnimatedImage
+wrapper. That meant every return to the same fit or zoom level could rebuild and
+preload scaled frames again. This was especially noticeable on large GIFs.
+
+This change adds a per-image cache for animated scaled views.
+
+Backups
+-------
+- backups/library.zip.before-animation-scale-cache.20260702-020005.bak
+
+Changed files
+-------------
+- library.zip
+  - quivilib/model/image/freeimage.pyc
+
+- .codex_tmp/test_animation_scale_cache_python26.ps1
+  - Added a focused cache verification script.
+
+Source-level summary
+--------------------
+In quivilib/model/image/freeimage.py:
+
+    self._animation_scale_cache = {}
+
+    ...
+
+    cache_key = (width, height, scaling_filter)
+    img = self._animation_scale_cache.get(cache_key)
+    if img is not None:
+        try:
+            img.index = self.img.index
+        except Exception:
+            pass
+    if img is None:
+        img = self.img.rescale(width, height, scaling_filter)
+        self._animation_scale_cache[cache_key] = img
+
+    ...
+
+    self._animation_scale_cache = {}
+
+Behavior change
+---------------
+- Animated scaled views are cached by width, height, and scaling filter.
+- Returning to a previously used zoom/fit size reuses the already-preloaded
+  scaled AnimatedImage wrapper.
+- The cached wrapper's frame index is synced to the source animation before use,
+  so switching views does not jump back to an old frame.
+- The cache is cleared on rotation because the source frame dimensions/content
+  change.
+- Static images are unaffected.
+
+Validation
+----------
+- python -m zipfile -t library.zip
+  Result: Done testing
+
+- .codex_tmp/test_animation_scale_cache_python26.ps1
+  FIRST_REUSED=True
+  FIRST_FRAMES=80
+  SECOND_FRAMES=80
+  FIRST_SCALE_SEC=1.602
+  SECOND_SCALE_SEC=1.458
+  REUSE_SCALE_SEC=0.000
+  RC=0
+
+- .codex_tmp/test_blocking_animation_preload_python26.ps1
+  FRAMES=80
+  LOADED=80
+  RC=0
+
+- .codex_tmp/test_gif_512_timing_python26.ps1
+  FRAMES=80
+  LOAD_SEC=2.123
+  NEXT5_SEC=0.023
+  RC=0
+
+- .codex_tmp/test_animated_webp_pillow_helper_python26.ps1
+  FRAMES=49
+  SIZE=1264x720
+  NEXT=62
+  RC=0
+
+- Real quivi.exe smoke test with Python removed from PATH:
+  RUNNING=True after 12 seconds
+  %APPDATA%\Quivi\quivi.log length: 0
+  %APPDATA%\Quivi\error.log length: 0
+
+Hashes
+------
+- library.zip after:
+  SHA256: 7FD2EAAB124ECB628822B14BADE7C5FDA7FA7821EB87D1CF846C2645C699E467
+
+- library.zip backup:
+  SHA256: 02D586EBA9B6AB055EBE79091A6F2D891D655A416AF539170F3F512965ED0E0B
+
+- quivilib/model/image/freeimage.pyc before:
+  SHA256: 2f158cd2d1af2be300964fcd05b55cc7c35be587066030e53269ddba9bfc153a
+
+- quivilib/model/image/freeimage.pyc after:
+  SHA256: de166fd1c72c7d63fc40216e0ea531b0a645f95493ccf412047a2b2f75320bd3
+
+Notes
+-----
+This intentionally spends more RAM to avoid paying the scaling/preload cost
+again for previously used animated view sizes. If many very large zoom sizes are
+visited in one session, memory use can rise until the image is closed or
+replaced.

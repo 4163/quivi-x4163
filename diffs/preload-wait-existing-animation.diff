@@ -1,0 +1,106 @@
+Wait for already-started animation preload
+==========================================
+
+Date: 2026-07-02
+
+Purpose
+-------
+Fix the remaining first-seconds GIF stutter after the blocking preload change.
+
+The scaling path can call preload_animation() from resize(), which starts a
+background preload and marks the AnimatedImage as already started. Playback
+startup then calls preload_animation(block=True), but the previous implementation
+returned immediately when preload had already started. That meant the timer could
+still begin while scaled frames were being generated.
+
+This change makes block=True wait for an existing preload worker to finish.
+
+Backups
+-------
+- backups/library.zip.before-preload-wait-existing.20260702-015238.bak
+
+Changed files
+-------------
+- library.zip
+  - pyfreeimage/image.pyc
+
+- .codex_tmp/test_blocking_animation_preload_python26.ps1
+  - Updated to reproduce the async-then-block sequence.
+
+Source-level summary
+--------------------
+In pyfreeimage/image.py:
+
+    self._preload_complete = threading.Event()
+
+    def preload_frames(self, block=False):
+        if self._preload_started:
+            if block:
+                self._preload_complete.wait()
+            return
+        self._preload_started = True
+        ...
+        def preload():
+            try:
+                ...
+                if not block:
+                    time.sleep(0.001)
+            except Exception:
+                pass
+            self._preload_complete.set()
+
+Behavior change
+---------------
+- If a background preload is already running, a later blocking preload now waits
+  for it to complete instead of returning early.
+- Blocking preload also skips the tiny cooperative sleep used by background
+  preload, so explicit startup waits complete faster.
+- This preserves background preload behavior for non-startup callers.
+
+Validation
+----------
+- python -m zipfile -t library.zip
+  Result: Done testing
+
+- .codex_tmp/test_blocking_animation_preload_python26.ps1
+  FRAMES=80
+  LOADED=80
+  SETUP_SEC=1.689
+  BLOCK_PRELOAD_SEC=1.371
+  RC=0
+
+- .codex_tmp/test_gif_512_timing_python26.ps1
+  FRAMES=80
+  LOADED_SCALED=6
+  LOAD_SEC=1.748
+  RESCALE_CREATE_SEC=0.006
+  FIRST_FRAME_SEC=0.000
+  NEXT5_SEC=0.027
+  RC=0
+
+- .codex_tmp/test_animated_webp_pillow_helper_python26.ps1
+  FRAMES=49
+  SIZE=1264x720
+  DELAYS=63,62,63,62,63,62
+  LOAD_SEC=2.665
+  NEXT=62
+  RC=0
+
+- Real quivi.exe smoke test with Python removed from PATH:
+  RUNNING=True after 12 seconds
+  %APPDATA%\Quivi\quivi.log length: 0
+  %APPDATA%\Quivi\error.log length: 0
+
+Hashes
+------
+- library.zip after:
+  SHA256: 02D586EBA9B6AB055EBE79091A6F2D891D655A416AF539170F3F512965ED0E0B
+
+- library.zip backup:
+  SHA256: FA50829125E8FBF986C723AADEC4C47D31173AE8864D5D2E5561A9B507B9BDDE
+
+- pyfreeimage/image.pyc before:
+  SHA256: 52d5e5b9353f2195dea740d8d5fcbd09bdc7594267659448f26572cb8b283524
+
+- pyfreeimage/image.pyc after:
+  SHA256: 794aec0067c237c198892bf51a0735af8b7aec1ee1bd354f881b93b983aa231f

@@ -1,0 +1,167 @@
+GIF stability / unicode path fix diff
+Generated: 2026-06-11T22:51:05.887530
+
+Changed artifact: library.zip
+Backup used for comparison: backups/library.zip.before-gif-stability-fixes.bak
+Diagnostic backup also kept: backups/library.zip.before-gif-static-diagnostic.20260611-224549.bak
+
+Archive hashes:
+old cb32cc60a7f67d5bea0046c3d0590ad4a3c0a26cad6745aad851b96290b6d2bc  backups/library.zip.before-gif-stability-fixes.bak
+new 3af9aee6e17fcd9355ce97dd12eb121500d1fe9f3e9b23931b925a1044919d90  library.zip
+
+Entry hashes:
+old 4cf027857d13119870c8eb106019880db9d9cb07cd7533501b83616ee96bfc24  pyfreeimage/image.pyc
+new 6096a7cca5e28068ba899b9ffcefcbf2c89fc1dbdaa9e525a0ee4911b269a8c0  pyfreeimage/image.pyc
+old b0349defef33dfac547d653c6c9882249936dcfd789ff7c303a4061765bc8d3b  quivilib/model/image/freeimage.pyc
+new c8d7c96476717f1573af7b30a24bca0389e0f8e5d12e0c7b5a8d57fdc4b41983  quivilib/model/image/freeimage.pyc
+old 47a8094c748db1f2e243cf6d957b1cf7af205243f3c9a1f4919d54bf3f873505  quivilib/model/image/__init__.pyc
+new bbf9fa797239a7fca3ab3f852db7621b325d87f6c09b2c2fe3bc7945a401262d  quivilib/model/image/__init__.pyc
+old 1d172a477862bbd6636615082571de36da41368c35b873322e06abde4dda205a  quivilib/control/canvas.pyc
+new f6db05ff4246697e0853336bae0f09c27c456d752b28056be8b0f82ea0ff8ed1  quivilib/control/canvas.pyc
+
+Summary:
+- GIF paths passed as unicode are now converted to ASCII bytes before FreeImage ctypes calls; non-ASCII paths are copied to a temporary ASCII .gif before loading.
+- GIF multi-bitmap loading uses GIF_PLAYBACK so FreeImage handles frame composition/disposal.
+- GIF dispatch and image handling avoid Python 2 ascii conversion failures on unicode paths.
+- Resized animated GIFs advance the cached scaled animation instead of rescaling every frame.
+- canvas.pyc was rebuilt cleanly after temporary diagnostics; no source behavior changed in this diff window.
+
+Verification:
+- Python 2.6 decoder test: FRAMES=3, DELAYS=120,180,240, NEXT=180, RC=0.
+- Python 2.6 unicode path decoder test: FRAMES=3, DELAYS=120,180,240, RC=0.
+- Quivi GUI smoke test with sample animated GIF: no new quivi.exe.log entry, no diagnostic log left behind.
+
+Source-level diff from decompiled pyc:
+diff --git a/.codex_tmp/diff_old_stability_src/pyfreeimage_image.py b/.codex_tmp/diff_current_stability_src/pyfreeimage_image.py
+index 1cc3ba7..124c0fb 100644
+--- a/.codex_tmp/diff_old_stability_src/pyfreeimage_image.py
++++ b/.codex_tmp/diff_current_stability_src/pyfreeimage_image.py
+@@ -2,11 +2,11 @@
+ # Python bytecode version base 2.6 (62161)
+ # Decompiled from: Python 3.11.1 (tags/v3.11.1:a7a450f, Dec  6 2022, 19:58:39) [MSC v.1934 64 bit (AMD64)]
+ # Embedded file name: pyfreeimage\image.pyc
+-# Compiled at: 2026-06-11 21:47:18
++# Compiled at: 2026-06-11 22:47:34
+ from __future__ import absolute_import
+ import pyfreeimage.library as library, pyfreeimage.constants as CO
+ from pyfreeimage.buffer import FileIO
+-import ctypes, logging as log
++import ctypes, logging as log, os, shutil, tempfile
+ 
+ class Image(object):
+ 
+@@ -260,14 +260,27 @@ class AnimatedImage(object):
+     @classmethod
+     def load(cls, path, flags=0):
+         lib = library.load()
+-        fif = lib.GetFIFFromFilename(path)
++        load_path = path
++        cleanup_path = None
+         multi = None
+         frames = []
+         delays = []
+         try:
++            if isinstance(path, unicode):
++                try:
++                    load_path = path.encode('ascii')
++                except UnicodeEncodeError:
++                    (fd, cleanup_path) = tempfile.mkstemp(suffix='.gif')
++                    os.close(fd)
++                    shutil.copyfile(path, cleanup_path)
++                    load_path = cleanup_path
++
++            fif = lib.GetFIFFromFilename(load_path)
+             if fif == CO.FIF_UNKNOWN or not lib.FIFSupportsReading(fif):
+                 raise RuntimeError('Unable to open animated image')
+-            multi = lib.OpenMultiBitmap(fif, path, False, True, True, flags)
++            if fif == CO.FIF_GIF:
++                flags |= CO.GIF_PLAYBACK
++            multi = lib.OpenMultiBitmap(fif, load_path, False, True, True, flags)
+             if not multi:
+                 raise RuntimeError('Unable to open animated image')
+             count = lib.GetPageCount(multi)
+@@ -289,6 +302,11 @@ class AnimatedImage(object):
+         finally:
+             if multi:
+                 lib.CloseMultiBitmap(multi, 0)
++            if cleanup_path:
++                try:
++                    os.remove(cleanup_path)
++                except Exception:
++                    pass
+ 
+         if not frames:
+             raise RuntimeError('Unable to load animation frames')
+diff --git a/.codex_tmp/diff_old_stability_src/quivilib_control_canvas.py b/.codex_tmp/diff_current_stability_src/quivilib_control_canvas.py
+index 3a95415..f94d0a5 100644
+--- a/.codex_tmp/diff_old_stability_src/quivilib_control_canvas.py
++++ b/.codex_tmp/diff_current_stability_src/quivilib_control_canvas.py
+@@ -2,7 +2,7 @@
+ # Python bytecode version base 2.6 (62161)
+ # Decompiled from: Python 3.11.1 (tags/v3.11.1:a7a450f, Dec  6 2022, 19:58:39) [MSC v.1934 64 bit (AMD64)]
+ # Embedded file name: quivilib\control\canvas.pyc
+-# Compiled at: 2026-06-11 22:09:53
++# Compiled at: 2026-06-11 22:48:33
+ from __future__ import with_statement, absolute_import
+ from quivilib.model.settings import Settings
+ from quivilib.resources import images
+diff --git a/.codex_tmp/diff_old_stability_src/quivilib_model_image___init__.py b/.codex_tmp/diff_current_stability_src/quivilib_model_image___init__.py
+index 450051a..5f164df 100644
+--- a/.codex_tmp/diff_old_stability_src/quivilib_model_image___init__.py
++++ b/.codex_tmp/diff_current_stability_src/quivilib_model_image___init__.py
+@@ -2,7 +2,7 @@
+ # Python bytecode version base 2.6 (62161)
+ # Decompiled from: Python 3.11.1 (tags/v3.11.1:a7a450f, Dec  6 2022, 19:58:39) [MSC v.1934 64 bit (AMD64)]
+ # Embedded file name: quivilib\model\image\__init__.pyc
+-# Compiled at: 2026-06-11 22:09:53
++# Compiled at: 2026-06-11 22:26:38
+ from __future__ import absolute_import
+ from quivilib import meta
+ import logging as log, traceback, sys
+@@ -42,7 +42,7 @@ supported_extensions = get_supported_extensions()
+ 
+ def open(f, path, canvas_type, delay=False):
+     img_classes = IMG_CLASSES
+-    if str(path).lower().endswith('.gif'):
++    if unicode(path).lower().endswith('.gif'):
+         img_classes = [_[1] for cls in IMG_CLASSES if cls.__name__ == 'FreeImage']
+         img_classes += [_[2] for cls in IMG_CLASSES if cls.__name__ != 'FreeImage']
+     for cls in img_classes:
+diff --git a/.codex_tmp/diff_old_stability_src/quivilib_model_image_freeimage.py b/.codex_tmp/diff_current_stability_src/quivilib_model_image_freeimage.py
+index 74d8a66..02d2950 100644
+--- a/.codex_tmp/diff_old_stability_src/quivilib_model_image_freeimage.py
++++ b/.codex_tmp/diff_current_stability_src/quivilib_model_image_freeimage.py
+@@ -2,7 +2,7 @@
+ # Python bytecode version base 2.6 (62161)
+ # Decompiled from: Python 3.11.1 (tags/v3.11.1:a7a450f, Dec  6 2022, 19:58:39) [MSC v.1934 64 bit (AMD64)]
+ # Embedded file name: quivilib\model\image\freeimage.pyc
+-# Compiled at: 2026-06-11 22:09:53
++# Compiled at: 2026-06-11 22:48:47
+ from __future__ import absolute_import
+ from quivilib.i18n import _
+ from quivilib.util import add_exception_custom_msg
+@@ -21,7 +21,7 @@ class FreeImage(object):
+         try:
+             if img is None:
+                 fi.library.load().reset_last_error()
+-                path_str = str(path) if path else ''
++                path_str = unicode(path) if path else u''
+                 if path_str.lower().endswith('.gif') and os.path.isfile(path_str):
+                     try:
+                         img = AnimatedImage.load(path_str)
+@@ -106,14 +106,7 @@ class FreeImage(object):
+             return 0
+         delay = self.img.advance_frame()
+         if self.zoomed_bmp:
+-            img = self.img.rescale(self.width, self.height, fi.FILTER_BICUBIC)
+-            if sys.platform != 'win32':
+-                if self.delay:
+-                    self.zoomed_bmp = img
+-                else:
+-                    self.zoomed_bmp = img.convert_to_wx_bitmap(wx)
+-            else:
+-                self.zoomed_bmp = img
++            self.zoomed_bmp.advance_frame()
+         elif sys.platform != 'win32' and not self.delay:
+             self.bmp = self.img.convert_to_wx_bitmap(wx)
+         return delay

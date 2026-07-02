@@ -1,0 +1,165 @@
+Animation thread scheduler diff
+Generated: 2026-07-02T00:32:00+08:00
+
+Changed artifact: library.zip
+Old archive: backups\library.zip.before-animation-thread-scheduler.20260702-002402.bak
+New archive: library.zip
+
+Archive hashes:
+old b819b4aa4cd9a140c8bf3909dc5751cf49e064b71721800464cd1691dd2795be  backups\library.zip.before-animation-thread-scheduler.20260702-002402.bak
+new 2ba3b9ace1587614d6e33d99e032acdc99cb954da879554a4e6fc532617f7518  library.zip
+
+Entry hashes:
+old 094df55cc21b2f02cbb58e072aa00dc84a2088cd519c8424ef1b58edaab3e725  quivilib/control/canvas.pyc
+new 54fb0f6032eea6233faf1b99604170339ba9a9bffa99f593a910cb50580cea01  quivilib/control/canvas.pyc
+
+Fork comparison:
+- The qazmlpok/quivi fork decodes animated GIF/WebP through Pillow and preloads every frame as wx.Bitmap.
+- Its smoother playback appears to come mostly from quivilib/interface/imagehandler.py: it uses a background animation thread, target timestamps, Windows sleep compensation, and sleep(0) near frame deadlines.
+- The fork deliberately disables zoom/fit transforms for animated images.
+- This patch copies the timing idea only. Quivi's existing image backends, animated WebP helper exe, GIF/WebP decoding, and zoom/fit behavior are preserved.
+
+Summary:
+- Replaced the wx.CallLater-only animation loop with a background scheduler thread.
+- Frame advances are still executed on the wx UI thread via wx.CallAfter.
+- The scheduler uses target timestamps instead of chaining approximate timer delays, reducing drift and wx timer jitter.
+- Old animation loops are invalidated with a token when switching images, which keeps fast GIF/WebP switching guarded.
+- Added a main-thread _strptime pre-import guard to avoid Python 2 import-lock warnings from the update checker while animation threads are active.
+
+Verification:
+- Python 2.6 compile: RC=0
+- Animated GIF loader:
+  ANIM=True DELAY=30 SIZE=1333x2000 FRAMES=110
+  NEXT=30
+  RC=0
+- Animated WebP loader with Python removed from PATH:
+  FRAMES=49 SIZE=1264x720 DELAYS=63,62,63,62,63,62 LOAD_SEC=3.259
+  NEXT=62
+  RC=0
+  WRAPPER_RC=0
+- Real quivi.exe smoke, animated WebP:
+  WEBP_RUNNING Title=001_1_1.webp - Quivi
+  WEBP_CLOSED
+- Real quivi.exe smoke, animated GIF:
+  GIF_RUNNING Title=sample-512-80.gif - Quivi
+  GIF_CLOSED
+- After final smoke tests:
+  %APPDATA%\Quivi\quivi.log length 0
+  %APPDATA%\Quivi\error.log length 0
+- library.zip integrity: python -m zipfile -t library.zip -> Done testing
+
+Source-level diff:
+diff --git a/.codex_tmp/src/quivilib/control/canvas.py b/.codex_tmp/src/quivilib/control/canvas.py
+--- a/.codex_tmp/src/quivilib/control/canvas.py
++++ b/.codex_tmp/src/quivilib/control/canvas.py
+@@
+ import wx
++import sys, threading, time
+ from wx.lib.pubsub import pub as Publisher
++try:
++    import _strptime
++except ImportError:
++    pass
+ ZOOM_FACTOR = 25
+ (MOVE_LEFT, MOVE_RIGHT, MOVE_UP, MOVE_DOWN) = range(4)
+ (MOVE_SMALL, MOVE_LARGE) = range(2)
++ANIMATION_MIN_DELAY = 20
++ANIMATION_RETRY_DELAY = 15
++ANIMATION_SLEEP_OFFSET = 7 if sys.platform == 'win32' else 0
+@@
+         Publisher.subscribe(self.on_program_closed, 'program.closed')
+         self.animation_call = None
++        self.animation_token = 0
++        self.animation_running = False
++        self.animation_lock = threading.RLock()
++        self.animation_tick_event = threading.Event()
++        self.animation_next_delay = ANIMATION_RETRY_DELAY
+@@
+     def _stop_animation(self):
++        self.animation_lock.acquire()
++        try:
++            self.animation_token += 1
++            self.animation_running = False
++            self.animation_tick_event.set()
++        finally:
++            self.animation_lock.release()
+         if self.animation_call:
+@@
+             self.animation_call = None
+         return
+ 
++    def _animation_now(self):
++        if sys.platform == 'win32':
++            return time.clock() * 1000.0
++        return time.time() * 1000.0
++
+     def _start_animation(self):
+@@
+-            self.animation_call = wx.CallLater(max(int(img.frame_delay), 20), self.on_animation_timer)
++            self.animation_lock.acquire()
++            try:
++                self.animation_token += 1
++                token = self.animation_token
++                self.animation_running = True
++                self.animation_next_delay = max(int(img.frame_delay), ANIMATION_MIN_DELAY)
++                self.animation_tick_event = threading.Event()
++            finally:
++                self.animation_lock.release()
++            t = threading.Thread(target=self._animation_loop, args=(token, max(int(img.frame_delay), ANIMATION_MIN_DELAY)))
++            t.setDaemon(True)
++            t.start()
+         return
++
++    def _is_animation_running(self, token):
++        self.animation_lock.acquire()
++        try:
++            return self.animation_running and token == self.animation_token
++        finally:
++            self.animation_lock.release()
++
++    def _animation_loop(self, token, delay):
++        target = self._animation_now() + delay
++        while self._is_animation_running(token):
++            sleep_ms = target - self._animation_now()
++            if sleep_ms > ANIMATION_SLEEP_OFFSET:
++                time.sleep((sleep_ms - ANIMATION_SLEEP_OFFSET) / 1000.0)
++                continue
++            while self._is_animation_running(token) and self._animation_now() < target:
++                time.sleep(0)
++            if not self._is_animation_running(token):
++                return
++            self.animation_tick_event.clear()
++            wx.CallAfter(self.on_animation_timer, token)
++            self.animation_tick_event.wait(1.0)
++            if not self._is_animation_running(token):
++                return
++            self.animation_lock.acquire()
++            try:
++                delay = self.animation_next_delay
++            finally:
++                self.animation_lock.release()
++            target += max(int(delay), ANIMATION_MIN_DELAY)
++        return
+@@
+-    def on_animation_timer(self):
++    def on_animation_timer(self, token=None):
+         self.animation_call = None
++        if token is not None and not self._is_animation_running(token):
++            return
+         img = self.canvas.img
+@@
+         delay = img.advance_frame()
+         if delay is None:
+-            self.animation_call = wx.CallLater(15, self.on_animation_timer)
++            delay = ANIMATION_RETRY_DELAY
+         else:
+             Publisher.sendMessage('%s.changed' % self.name, None)
+-            self.animation_call = wx.CallLater(max(int(delay), 20), self.on_animation_timer)
++        self.animation_lock.acquire()
++        try:
++            if token is None or token == self.animation_token:
++                self.animation_next_delay = max(int(delay), ANIMATION_MIN_DELAY)
++                self.animation_tick_event.set()
++        finally:
++            self.animation_lock.release()
+         return

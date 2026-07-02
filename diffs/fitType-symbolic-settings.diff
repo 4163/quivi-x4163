@@ -1,0 +1,69 @@
+Symbolic FitType settings diff
+Generated: 2026-07-01T23:41:00.871493
+
+Changed artifact: library.zip
+Old archive: backups\library.zip.before-fitType-symbolic-settings.20260701-233420.bak
+New archive: library.zip
+
+Archive hashes:
+old 815141e23b01ff5c43c58dfae81d6ccec7837ab20cb2668be30b43b1db959dd5  backups\library.zip.before-fitType-symbolic-settings.20260701-233420.bak
+new 445e2b3f44caecac354071f4f81de1e27cb8ea48b6e22ef2e146a57f1462443d  library.zip
+
+Entry hashes:
+old 2e360cef71e092c979a2c2be44de8f0058ae716020178b2199b3fa4e8785dbcd  quivilib/model/settings.pyc
+new 313f3c3104f7f586dc170a9dfc491c5810faed032c38e967e7775871807b5d3a  quivilib/model/settings.pyc
+
+Summary:
+- Settings.getint now maps symbolic Options/FitType values like fitType.HEIGHT_IF_LARGER to Quivi integer constants.
+- Numeric FitType values continue to parse normally.
+
+Verification:
+- Python 2.6 settings test: FIT=2 EXPECT=2 and FIT_NUMERIC=1, RC=0.
+- Quivi GUI smoke test with animated WebP sample stayed running and wrote no new quivi.exe.log.
+
+Source-level diff from decompiled pyc:
+diff --git "a/.codex_tmp\\fitType-symbolic-settings_old_src/settings.py" "b/.codex_tmp\\fitType-symbolic-settings_new_src/settings.py"
+index 5c26c2b..1514808 100644
+--- "a/.codex_tmp\\fitType-symbolic-settings_old_src/settings.py"
++++ "b/.codex_tmp\\fitType-symbolic-settings_new_src/settings.py"
+@@ -2,7 +2,7 @@
+ # Python bytecode version base 2.6 (62161)
+ # Decompiled from: Python 3.11.1 (tags/v3.11.1:a7a450f, Dec  6 2022, 19:58:39) [MSC v.1934 64 bit (AMD64)]
+ # Embedded file name: quivilib\model\settings.pyc
+-# Compiled at: 2010-09-05 09:41:01
++# Compiled at: 2026-07-01 23:35:21
+ from __future__ import with_statement, absolute_import
+ from quivilib.model.container import SortOrder
+ from ConfigParser import SafeConfigParser
+@@ -30,6 +30,18 @@ class Settings(UnicodeAwareConfigParser):
+     (ZOOM_DEFAULT, ZOOM_SYSTEM, ZOOM_NEIGHBOR, ZOOM_BILINEAR, ZOOM_BICUBIC, ZOOM_CATMULLROM) = range(6)
+     (MOVE_DRAG, MOVE_LOCK) = range(2)
+     (BG_SYSTEM, BG_BLACK, BG_WHITE) = range(3)
++    _FIT_TYPE_NAMES = {'fitType.NONE': FIT_NONE, 
++       'fitType.WIDTH_IF_LARGER': FIT_WIDTH_OVERSIZE, 
++       'fitType.HEIGHT_IF_LARGER': FIT_HEIGHT_OVERSIZE, 
++       'fitType.BOTH_IF_LARGER': FIT_BOTH_OVERSIZE, 
++       'fitType.CUSTOM_WIDTH': FIT_CUSTOM_WIDTH, 
++       'fitType.SCREEN_CROP_EXCESS': FIT_SCREEN_CROP_EXCESS, 
++       'fitType.SCREEN_SHOW_ALL': FIT_SCREEN_SHOW_ALL, 
++       'fitType.SCREEN_NONE': FIT_SCREEN_NONE, 
++       'fitType.TILED': FIT_TILED, 
++       'fitType.WIDTH': FIT_WIDTH, 
++       'fitType.HEIGHT': FIT_HEIGHT, 
++       'fitType.BOTH': FIT_BOTH}
+ 
+     def __init__(self, path):
+         UnicodeAwareConfigParser.__init__(self)
+@@ -74,6 +86,12 @@ class Settings(UnicodeAwareConfigParser):
+ 
+         return defaults
+ 
++    def getint(self, section, option):
++        value = self.get(section, option)
++        if section == 'Options' and option == 'FitType':
++            value = self._FIT_TYPE_NAMES.get(value, value)
++        return int(value)
++
+     def set(self, section, option, value):
+         UnicodeAwareConfigParser.set(self, section, option, value)
+         try:

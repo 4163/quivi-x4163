@@ -1,0 +1,60 @@
+FitType case-insensitive settings diff
+Generated: 2026-07-01T23:56:00+08:00
+
+Changed artifact: library.zip
+Old archive: backups\library.zip.before-fitType-case-insensitive.20260701-234847.bak
+New archive: library.zip
+
+Archive hashes:
+old 445e2b3f44caecac354071f4f81de1e27cb8ea48b6e22ef2e146a57f1462443d  backups\library.zip.before-fitType-case-insensitive.20260701-234847.bak
+new 69ce64d3b83814a12301a688182736fd8f140637eb1a4815ca033d2bf02d1b25  library.zip
+
+Entry hashes:
+old 313f3c3104f7f586dc170a9dfc491c5810faed032c38e967e7775871807b5d3a  quivilib/model/settings.pyc
+new 2d296989d0c99ec093b7e2bfc4d798c743ec7e6c0b41b48ca35283c8514e2862  quivilib/model/settings.pyc
+
+Summary:
+- Settings.getint now handles Options/FitType case-insensitively for both the section/option name and the symbolic value prefix.
+- This fixes saved config values like FitType.HEIGHT_IF_LARGER as well as the earlier fitType.HEIGHT_IF_LARGER spelling.
+- Numeric FitType values still parse normally.
+
+Verification:
+- Python 2.6 settings test:
+  FIT=2 EXPECT=2
+  FIT_CAPITAL=2 EXPECT=2
+  FIT_NUMERIC=1
+  RC=0
+- library.zip integrity: python -m zipfile -t library.zip -> Done testing
+- Quivi launch smoke: process stayed running with title "<folder-name> - Quivi"; closed cleanly; error.log remained 0 bytes.
+
+Source-level diff:
+diff --git a/.codex_tmp/src/quivilib/model/settings.py b/.codex_tmp/src/quivilib/model/settings.py
+--- a/.codex_tmp/src/quivilib/model/settings.py
++++ b/.codex_tmp/src/quivilib/model/settings.py
+@@
+     _FIT_TYPE_NAMES = {
+         'fitType.NONE': FIT_NONE,
+         'fitType.WIDTH_IF_LARGER': FIT_WIDTH_OVERSIZE,
+@@
+         'fitType.BOTH': FIT_BOTH,
+     }
+ 
++    def _normalize_fit_type_value(self, value):
++        mapped = self._FIT_TYPE_NAMES.get(value)
++        if mapped is None:
++            mapped = self._FIT_TYPE_NAMES.get(value[:1].lower() + value[1:])
++        if mapped is None:
++            mapped = value
++        return mapped
++
+     def __init__(self, path):
+         UnicodeAwareConfigParser.__init__(self)
+         self.path = path
+@@
+     def getint(self, section, option):
+         value = self.get(section, option)
+-        if section == 'Options' and option == 'FitType':
+-            value = self._FIT_TYPE_NAMES.get(value, value)
++        if section.lower() == 'options' and option.lower() == 'fittype':
++            value = self._normalize_fit_type_value(value)
+         return int(value)

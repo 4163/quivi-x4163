@@ -1,0 +1,155 @@
+GIF non-blocking advance diff
+Generated: 2026-06-12T13:05:14.470271
+
+Changed artifact: library.zip
+Old archive: backups\library.zip.before-gif-nonblocking-advance.20260611-233049.bak
+New archive: backups\library.zip.before-gif-gdiplus-animation.20260612-124306.bak
+
+Archive hashes:
+old 6e5d411de067cedbc211444754cc55989c9851831b77561f0b55c09e152f54fe  backups\library.zip.before-gif-nonblocking-advance.20260611-233049.bak
+new d923561e7a6e8f3a37e8c0eb8073d88684030610ffea66f6b295cfd4fba1886a  backups\library.zip.before-gif-gdiplus-animation.20260612-124306.bak
+
+Entry hashes:
+old 7580a18c5d921d0fbe4c3ccf10fb27d29b941c0c66e0bb69fd7d364b4d2431de  pyfreeimage/image.pyc
+new fb2979bff9c81e69dab6ed6c81061331baff8098c2b5bad348c60bfe8218619a  pyfreeimage/image.pyc
+old dfee0e92134d25c54fcaba3da8804715d7534465e53b34c0e0b3e9da26d7f800  quivilib/model/image/freeimage.pyc
+new d57423e6bc32d72463e208e3fdb8347853b7757afc6b11a45c94d3d8cf5f0ad2  quivilib/model/image/freeimage.pyc
+old e29c68d885c45d83ab3fbcd0cb7f323aaaf4785587fe11c9b51ece739ce8488f  quivilib/model/image/gdiplus.pyc
+new e29c68d885c45d83ab3fbcd0cb7f323aaaf4785587fe11c9b51ece739ce8488f  quivilib/model/image/gdiplus.pyc
+old bbf9fa797239a7fca3ab3f852db7621b325d87f6c09b2c2fe3bc7945a401262d  quivilib/model/image/__init__.pyc
+new bbf9fa797239a7fca3ab3f852db7621b325d87f6c09b2c2fe3bc7945a401262d  quivilib/model/image/__init__.pyc
+old bae7209e7651c240f9f0e4c29fc128663513c7b2e351337544193b55b08cfd27  quivilib/control/canvas.pyc
+new 094df55cc21b2f02cbb58e072aa00dc84a2088cd519c8424ef1b58edaab3e725  quivilib/control/canvas.pyc
+
+Summary:
+- Animation timer avoids decoding uncached frames on the UI thread
+- Timer retries shortly when the next frame is not ready
+- Frame readiness fast path avoids waiting on preload lock
+
+Verification:
+- Non-blocking test: MISS=None with MISS_SEC=0.0000, then HIT after preload
+- GUI smoke test with copied large GIF produced no log
+
+Source-level diff from decompiled pyc:
+diff --git "a/.codex_tmp\\gif-nonblocking-advance_old_src/pyfreeimage_image.py" "b/.codex_tmp\\gif-nonblocking-advance_new_src/pyfreeimage_image.py"
+index ca757c6..3783d75 100644
+--- "a/.codex_tmp\\gif-nonblocking-advance_old_src/pyfreeimage_image.py"
++++ "b/.codex_tmp\\gif-nonblocking-advance_new_src/pyfreeimage_image.py"
+@@ -2,7 +2,7 @@
+ # Python bytecode version base 2.6 (62161)
+ # Decompiled from: Python 3.11.1 (tags/v3.11.1:a7a450f, Dec  6 2022, 19:58:39) [MSC v.1934 64 bit (AMD64)]
+ # Embedded file name: pyfreeimage\image.pyc
+-# Compiled at: 2026-06-11 23:16:56
++# Compiled at: 2026-06-12 12:39:35
+ from __future__ import absolute_import
+ import pyfreeimage.library as library, pyfreeimage.constants as CO
+ from pyfreeimage.buffer import FileIO
+@@ -357,13 +357,19 @@ class AnimatedImage(object):
+         return
+ 
+     def _ensure_frame(self, index):
+-        self._lock.acquire()
+-        try:
+-            return self._ensure_frame_locked(index)
+-        finally:
+-            self._lock.release()
++        if self.frames[index] is not None:
++            return self.frames[index]
++        else:
++            self._lock.acquire()
++            try:
++                return self._ensure_frame_locked(index)
++            finally:
++                self._lock.release()
+ 
+-        return
++            return
++
++    def is_frame_ready(self, index):
++        return self.frames[index] is not None
+ 
+     def _ensure_frame_locked(self, index):
+         if self.frames[index] is None:
+@@ -435,9 +441,13 @@ class AnimatedImage(object):
+             self._ensure_frame(self.index)
+         return self.delays[self.index]
+ 
+-    def advance_frame(self):
+-        self.index = (self.index + 1) % len(self.frames)
+-        return self.frame_delay
++    def advance_frame(self, block=True):
++        next_index = (self.index + 1) % len(self.frames)
++        if not block and not self.is_frame_ready(next_index):
++            return None
++        else:
++            self.index = next_index
++            return self.frame_delay
+ 
+     def composite(self, use_file_bg=False, app_bg_color=None, bg=None):
+         frames = [None] * len(self.frames)
+diff --git "a/.codex_tmp\\gif-nonblocking-advance_old_src/quivilib_control_canvas.py" "b/.codex_tmp\\gif-nonblocking-advance_new_src/quivilib_control_canvas.py"
+index 73d2d07..c212da7 100644
+--- "a/.codex_tmp\\gif-nonblocking-advance_old_src/quivilib_control_canvas.py"
++++ "b/.codex_tmp\\gif-nonblocking-advance_new_src/quivilib_control_canvas.py"
+@@ -2,7 +2,7 @@
+ # Python bytecode version base 2.6 (62161)
+ # Decompiled from: Python 3.11.1 (tags/v3.11.1:a7a450f, Dec  6 2022, 19:58:39) [MSC v.1934 64 bit (AMD64)]
+ # Embedded file name: quivilib\control\canvas.pyc
+-# Compiled at: 2026-06-11 23:17:14
++# Compiled at: 2026-06-12 12:36:58
+ from __future__ import with_statement, absolute_import
+ from quivilib.model.settings import Settings
+ from quivilib.resources import images
+@@ -74,8 +74,11 @@ class CanvasController(object):
+             return
+         else:
+             delay = img.advance_frame()
+-            Publisher.sendMessage('%s.changed' % self.name, None)
+-            self.animation_call = wx.CallLater(max(int(delay), 20), self.on_animation_timer)
++            if delay is None:
++                self.animation_call = wx.CallLater(15, self.on_animation_timer)
++            else:
++                Publisher.sendMessage('%s.changed' % self.name, None)
++                self.animation_call = wx.CallLater(max(int(delay), 20), self.on_animation_timer)
+             return
+ 
+     def on_canvas_painted(self, message):
+diff --git "a/.codex_tmp\\gif-nonblocking-advance_old_src/quivilib_model_image_freeimage.py" "b/.codex_tmp\\gif-nonblocking-advance_new_src/quivilib_model_image_freeimage.py"
+index 8b187a5..9ea626a 100644
+--- "a/.codex_tmp\\gif-nonblocking-advance_old_src/quivilib_model_image_freeimage.py"
++++ "b/.codex_tmp\\gif-nonblocking-advance_new_src/quivilib_model_image_freeimage.py"
+@@ -2,7 +2,7 @@
+ # Python bytecode version base 2.6 (62161)
+ # Decompiled from: Python 3.11.1 (tags/v3.11.1:a7a450f, Dec  6 2022, 19:58:39) [MSC v.1934 64 bit (AMD64)]
+ # Embedded file name: quivilib\model\image\freeimage.pyc
+-# Compiled at: 2026-06-11 23:26:06
++# Compiled at: 2026-06-12 12:36:45
+ from __future__ import absolute_import
+ from quivilib.i18n import _
+ from quivilib.util import add_exception_custom_msg
+@@ -108,12 +108,19 @@ class FreeImage(object):
+     def advance_frame(self):
+         if not self.is_animated:
+             return 0
+-        delay = self.img.advance_frame()
+-        if self.zoomed_bmp:
+-            self.zoomed_bmp.advance_frame()
+-        elif sys.platform != 'win32' and not self.delay:
+-            self.bmp = self.img.convert_to_wx_bitmap(wx)
+-        return delay
++        else:
++            block = sys.platform != 'win32'
++            delay = self.img.advance_frame(block)
++            if delay is None:
++                self.preload_animation()
++                return
++            if self.zoomed_bmp:
++                zoom_delay = self.zoomed_bmp.advance_frame(block)
++                if zoom_delay is None:
++                    return
++            elif sys.platform != 'win32' and not self.delay:
++                self.bmp = self.img.convert_to_wx_bitmap(wx)
++            return delay
+ 
+     def preload_animation(self):
+         if not self.is_animated:

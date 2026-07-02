@@ -1,0 +1,22 @@
+pyquivi.ini FitType normalization diff
+Generated: 2026-07-01T23:56:00+08:00
+
+Changed artifact: %APPDATA%\Quivi\pyquivi.ini
+Old backup: backups\pyquivi.ini.before-fitType-capital-normalize.20260701-234846.bak
+
+File hashes:
+old a401371a42b79fb54f67a171ef7b26633defab13d0a377a0c44d51de22f8b74f  backups\pyquivi.ini.before-fitType-capital-normalize.20260701-234846.bak
+new 4c62db965d2548dd4cbda031da70dde7e93dce0ec6fd972384bf0fb47376c256  %APPDATA%\Quivi\pyquivi.ini
+
+Summary:
+- Normalized the active saved Quivi setting from the symbolic FitType enum name to the integer value Quivi expects at runtime.
+- This fixes the immediate launch failure:
+  invalid literal for int() with base 10: 'FitType.HEIGHT_IF_LARGER'
+
+Unified diff:
+diff --git a/%APPDATA%/Quivi/pyquivi.ini b/%APPDATA%/Quivi/pyquivi.ini
+--- a/%APPDATA%/Quivi/pyquivi.ini
++++ b/%APPDATA%/Quivi/pyquivi.ini
+@@
+-fittype = FitType.HEIGHT_IF_LARGER
++fittype = 2

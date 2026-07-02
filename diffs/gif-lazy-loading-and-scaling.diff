@@ -1,0 +1,243 @@
+GIF lazy loading / lazy scaling diff
+Generated: 2026-06-11T23:01:29.007275
+
+Changed artifact: library.zip
+Backup used for comparison: backups/library.zip.before-gif-lazy-loading.20260611-225442.bak
+
+Archive hashes:
+old 3af9aee6e17fcd9355ce97dd12eb121500d1fe9f3e9b23931b925a1044919d90  backups/library.zip.before-gif-lazy-loading.20260611-225442.bak
+new 769957da5e930ae34eefb81ee4a86eb85dc6684054fe606d4f1557aaaa3b8f22  library.zip
+
+Entry hashes:
+old 6096a7cca5e28068ba899b9ffcefcbf2c89fc1dbdaa9e525a0ee4911b269a8c0  pyfreeimage/image.pyc
+new 582595176665d43452750fddda0f0fa175a17c12ac5875ff749fdcde01553fac  pyfreeimage/image.pyc
+old c8d7c96476717f1573af7b30a24bca0389e0f8e5d12e0c7b5a8d57fdc4b41983  quivilib/model/image/freeimage.pyc
+new 4257235d2c1d5b7e161f1f2ff5a2c17246c089a5fa04ffb18f1b751cb16d0e0b  quivilib/model/image/freeimage.pyc
+old bbf9fa797239a7fca3ab3f852db7621b325d87f6c09b2c2fe3bc7945a401262d  quivilib/model/image/__init__.pyc
+new bbf9fa797239a7fca3ab3f852db7621b325d87f6c09b2c2fe3bc7945a401262d  quivilib/model/image/__init__.pyc
+old f6db05ff4246697e0853336bae0f09c27c456d752b28056be8b0f82ea0ff8ed1  quivilib/control/canvas.pyc
+new f6db05ff4246697e0853336bae0f09c27c456d752b28056be8b0f82ea0ff8ed1  quivilib/control/canvas.pyc
+
+Summary:
+- Animated GIF loading now clones only frame 0 initially and keeps the FreeImage multi-bitmap open for on-demand frame cloning.
+- Frame delays for later frames are read lazily when the frame is first reached.
+- Resized/rotated animated images now materialize transformed frames lazily and cache each transformed frame.
+- Animated GIF thumbnails now use the current frame only instead of resizing the full animation.
+
+Verification:
+- Animated GIF decoder test: FRAMES=3, initial delayed frames are lazy, NEXT=180, RC=0.
+- Unicode path GIF decoder test: FRAMES=3, RC=0.
+- Lazy resize test: FRAMES=3, LOADED=1,1,2, NEXT=180, RC=0.
+- 512x512 80-frame timing test: LOAD_SEC=0.022, RESCALE_CREATE_SEC=0.032, FIRST_FRAME_SEC=0.000, NEXT5_SEC=0.141, LOADED_SCALED=6.
+- Quivi GUI smoke test with 512x512 80-frame GIF: no new quivi.exe.log entry.
+
+Source-level diff from decompiled pyc:
+diff --git a/.codex_tmp/diff_old_lazy_src/pyfreeimage_image.py b/.codex_tmp/diff_current_lazy_src/pyfreeimage_image.py
+index 124c0fb..4f4a32f 100644
+--- a/.codex_tmp/diff_old_lazy_src/pyfreeimage_image.py
++++ b/.codex_tmp/diff_current_lazy_src/pyfreeimage_image.py
+@@ -2,7 +2,7 @@
+ # Python bytecode version base 2.6 (62161)
+ # Decompiled from: Python 3.11.1 (tags/v3.11.1:a7a450f, Dec  6 2022, 19:58:39) [MSC v.1934 64 bit (AMD64)]
+ # Embedded file name: pyfreeimage\image.pyc
+-# Compiled at: 2026-06-11 22:47:34
++# Compiled at: 2026-06-11 22:59:27
+ from __future__ import absolute_import
+ import pyfreeimage.library as library, pyfreeimage.constants as CO
+ from pyfreeimage.buffer import FileIO
+@@ -263,6 +263,7 @@ class AnimatedImage(object):
+         load_path = path
+         cleanup_path = None
+         multi = None
++        keep_multi = False
+         frames = []
+         delays = []
+         try:
+@@ -286,31 +287,40 @@ class AnimatedImage(object):
+             count = lib.GetPageCount(multi)
+             if count <= 1:
+                 raise RuntimeError('Image is not animated')
+-            for idx in xrange(count):
+-                page = lib.LockPage(multi, idx)
+-                if not page:
+-                    continue
+-                try:
+-                    delays.append(cls._get_frame_delay(lib, page))
+-                    dib = lib.Clone(page)
+-                    if not dib:
+-                        raise RuntimeError('Unable to clone animation frame')
+-                    frames.append(Image(dib))
+-                finally:
+-                    lib.UnlockPage(multi, page, False)
++            frames = [
++             None] * count
++            delays = [None] * count
++            page = lib.LockPage(multi, 0)
++            if not page:
++                raise RuntimeError('Unable to load animation frame')
++            try:
++                delays[0] = cls._get_frame_delay(lib, page)
++                dib = lib.Clone(page)
++                if not dib:
++                    raise RuntimeError('Unable to clone animation frame')
++                frames[0] = Image(dib)
++                keep_multi = True
++            finally:
++                lib.UnlockPage(multi, page, False)
+ 
+         finally:
+             if multi:
+-                lib.CloseMultiBitmap(multi, 0)
++                if keep_multi:
++                    pass
++                else:
++                    lib.CloseMultiBitmap(multi, 0)
+             if cleanup_path:
+-                try:
+-                    os.remove(cleanup_path)
+-                except Exception:
++                if keep_multi:
+                     pass
++                else:
++                    try:
++                        os.remove(cleanup_path)
++                    except Exception:
++                        pass
+ 
+-        if not frames:
++        if not frames or frames[0] is None:
+             raise RuntimeError('Unable to load animation frames')
+-        return cls(frames, delays)
++        return cls(frames, delays, multi=multi, cleanup_path=cleanup_path)
+ 
+     @staticmethod
+     def _get_frame_delay(lib, dib):
+@@ -329,19 +339,54 @@ class AnimatedImage(object):
+             delay = 100
+         return delay
+ 
+-    def __init__(self, frames, delays):
++    def __init__(self, frames, delays, source=None, resize_args=None, rotate_angle=None, multi=None, cleanup_path=None):
+         self.frames = frames
+         self.delays = delays
+         self.index = 0
+         self.is_animated = True
++        self.source = source
++        self.resize_args = resize_args
++        self.rotate_angle = rotate_angle
++        self.multi = multi
++        self.cleanup_path = cleanup_path
++        self._lib = library.load()
+         return
+ 
++    def _ensure_frame(self, index):
++        if self.frames[index] is None:
++            if self.source is not None:
++                frame = self.source._ensure_frame(index)
++                if self.delays[index] is None:
++                    self.delays[index] = self.source.delays[index]
++            else:
++                page = self._lib.LockPage(self.multi, index)
++                if not page:
++                    raise RuntimeError('Unable to load animation frame')
++                try:
++                    self.delays[index] = self._get_frame_delay(self._lib, page)
++                    dib = self._lib.Clone(page)
++                    if not dib:
++                        raise RuntimeError('Unable to clone animation frame')
++                    frame = Image(dib)
++                finally:
++                    self._lib.UnlockPage(self.multi, page, False)
++
++            if self.resize_args:
++                (width, height, resampling_filter) = self.resize_args
++                frame = frame.rescale(width, height, resampling_filter)
++            if self.rotate_angle is not None:
++                frame = frame.rotate(self.rotate_angle)
++            self.frames[index] = frame
++        return self.frames[index]
++
+     @property
+     def current(self):
+-        return self.frames[self.index]
++        return self._ensure_frame(self.index)
+ 
+     @property
+     def frame_delay(self):
++        if self.delays[self.index] is None:
++            self._ensure_frame(self.index)
+         return self.delays[self.index]
+ 
+     def advance_frame(self):
+@@ -361,19 +406,42 @@ class AnimatedImage(object):
+         return self.__class__(frames, self.delays[:])
+ 
+     def rescale(self, width, height, resampling_filter):
+-        frames = [_[1] for frame in self.frames]
+-        img = self.__class__(frames, self.delays[:])
++        frames = [
++         None] * len(self.frames)
++        if self.frames[self.index] is not None:
++            frames[self.index] = self.frames[self.index].rescale(width, height, resampling_filter)
++        img = self.__class__(frames, self.delays[:], self, (width, height, resampling_filter))
+         img.index = self.index
+         return img
+ 
+     def rotate(self, angle):
+-        frames = [_[1] for frame in self.frames]
+-        img = self.__class__(frames, self.delays[:])
++        frames = [
++         None] * len(self.frames)
++        if self.frames[self.index] is not None:
++            frames[self.index] = self.frames[self.index].rotate(angle)
++        img = self.__class__(frames, self.delays[:], self, rotate_angle=angle)
+         img.index = self.index
+         return img
+ 
+     def __getattr__(self, name):
+         return getattr(self.current, name)
+ 
++    def __del__(self):
++        try:
++            if self.multi:
++                self._lib.CloseMultiBitmap(self.multi, 0)
++                self.multi = None
++        except Exception:
++            pass
++
++        try:
++            if self.cleanup_path:
++                os.remove(self.cleanup_path)
++                self.cleanup_path = None
++        except Exception:
++            pass
++
++        return
++
+ 
+ return
+diff --git a/.codex_tmp/diff_old_lazy_src/quivilib_model_image_freeimage.py b/.codex_tmp/diff_current_lazy_src/quivilib_model_image_freeimage.py
+index 02d2950..7c4268c 100644
+--- a/.codex_tmp/diff_old_lazy_src/quivilib_model_image_freeimage.py
++++ b/.codex_tmp/diff_current_lazy_src/quivilib_model_image_freeimage.py
+@@ -2,7 +2,7 @@
+ # Python bytecode version base 2.6 (62161)
+ # Decompiled from: Python 3.11.1 (tags/v3.11.1:a7a450f, Dec  6 2022, 19:58:39) [MSC v.1934 64 bit (AMD64)]
+ # Embedded file name: quivilib\model\image\freeimage.pyc
+-# Compiled at: 2026-06-11 22:48:47
++# Compiled at: 2026-06-11 22:55:29
+ from __future__ import absolute_import
+ from quivilib.i18n import _
+ from quivilib.util import add_exception_custom_msg
+@@ -167,7 +167,10 @@ class FreeImage(object):
+             factor = 1
+         width = int(self.original_width * factor)
+         height = int(self.original_height * factor)
+-        img = self.img.rescale(width, height, fi.FILTER_BILINEAR)
++        if self.is_animated:
++            img = self.img.current.rescale(width, height, fi.FILTER_BILINEAR)
++        else:
++            img = self.img.rescale(width, height, fi.FILTER_BILINEAR)
+         if delay:
+ 
+             def delayed_fn(img=img, wx=wx):

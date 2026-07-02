@@ -1,0 +1,70 @@
+Binary/source change: GIF FreeImage dispatch fix
+===============================================
+
+Purpose
+-------
+Make .gif files try Quivi's FreeImage backend before the Windows GDI+ backend.
+GDI+ successfully loaded GIFs as static images, preventing the animated GIF
+decoder from being used.
+
+Changed file
+------------
+library.zip
+
+Backup
+------
+backups/library.zip.before-gif-freeimage-dispatch-fix.bak
+
+Archive hashes
+--------------
+Old library.zip SHA256: 6245ABB9FD5C6D5349876456D820381359537ADD0605E5E6365B920F74CEDEC2
+New library.zip SHA256: CB32CC60A7F67D5BEA0046C3D0590AD4A3C0A26CAD6745AAD851B96290B6D2BC
+
+Replaced entries
+----------------
+quivilib/model/image/__init__.pyc
+  old SHA256: 9D8ECB9B0C3E29CE920C32AB917F7CE9E62330DAD9FE670A7065D6B69E74945C
+  new SHA256: 47A8094C748DB1F2E243CF6D957B1CF7AF205243F3C9A1F4919D54BF3F873505
+quivilib/model/image/freeimage.pyc
+  old SHA256: 366432584EF0E557AEC3944AE783336CAE4DF789B87ED748C0CBD46BFFA9785B
+  new SHA256: B0349DEFEF33DFAC547D653C6C9882249936DCFD789FF7C303A4061765BC8D3B
+quivilib/control/canvas.pyc
+  old SHA256: A198A10B82DEA9B3414BB6722547CCF933FA3167BC7D648C8C8A36444493D67D
+  new SHA256: 1D172A477862BBD6636615082571DE36DA41368C35B873322E06ABDE4DDA205A
+
+Verification
+------------
+quivi.exe sample-animated.gif: stayed open 8 seconds, no new log entry.
+Temporary animation debug logging removed.
+
+Source-level diff
+-----------------
+--- a/quivilib/model/image/__init__.py
++++ b/quivilib/model/image/__init__.py
+@@ -34,17 +34,18 @@
+ supported_extensions = get_supported_extensions()
+ 
+ def open(f, path, canvas_type, delay=False):
+-    for cls in IMG_CLASSES:
++    img_classes = IMG_CLASSES
++    if str(path).lower().endswith('.gif'):
++        img_classes = [cls for cls in IMG_CLASSES if cls.__name__ == 'FreeImage']
++        img_classes += [cls for cls in IMG_CLASSES if cls.__name__ != 'FreeImage']
++    for cls in img_classes:
+         try:
+             img = cls(canvas_type, f, path, delay=delay)
+             break
+         except Exception, e:
+-            if IMG_CLASSES[-1] is cls:
++            if img_classes[-1] is cls:
+                 raise
+             else:
+                 log.debug(traceback.format_exc())
+ 
+     return img
+-
+-
+-
+
+
+

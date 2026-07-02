@@ -1,0 +1,71 @@
+Scaling quality menu diff
+Generated: 2026-07-02T01:16:00+08:00
+
+Changed artifact: library.zip
+Old archive: backups\library.zip.before-scaling-quality-menu.20260702-010326.bak
+New archive: library.zip
+
+Archive hashes:
+old 7a75048d12bffa32b44cbf08dc5cfbbcf0772a18a75958e392d9087c846b69b9  backups\library.zip.before-scaling-quality-menu.20260702-010326.bak
+new 44eb8c78f217938865e264c8c328ac396a76c24ece3b54d987d15180fc2eb21b  library.zip
+
+Entry hashes:
+old 2d296989d0c99ec093b7e2bfc4d798c743ec7e6c0b41b48ca35283c8514e2862  quivilib/model/settings.pyc
+new 063048814f615fc99e7f80a2a7b6e189cc277da40f2e90d0336b2cfb2aac0743  quivilib/model/settings.pyc
+old 60728b530b010acfdd9b077efce2f836870df4d733bdfb2d664444697916a8fb  quivilib/control/canvas.pyc
+new 25c8448e6edb30c9db7e75c4c200284434e169e7d0533fb25ee974daca902ab2  quivilib/control/canvas.pyc
+old c4f5b5a00cffd75eb366a21e8f686c50c074f5e941caa7df6be6c6596bcf737a  quivilib/model/image/freeimage.pyc
+new f4d6d590c03c4545803ba0c6287db5456f131d0d0f77b657423314b0796f176e  quivilib/model/image/freeimage.pyc
+old 20d5cdd5e6ba0caef28544838ceff930245edaf498ec15ca0b7161903cb43d72  quivilib/control/menu.pyc
+new 5878eb48c68960b5f57922db14af4bd352e781a5dba5d7418a06bac67a321324  quivilib/control/menu.pyc
+unchanged d50dbbbf7ccb835c39f40d28d95491b988160a120cffab1d20e4f23161222b6e  quivilib/model/canvas.pyc
+
+Current scaling behavior:
+- Before this change, full image resize used FreeImage FILTER_BICUBIC.
+- Thumbnails still use FILTER_BILINEAR.
+- On Windows, animated images with no pre-scaled bitmap are drawn by StretchDIBits using COLORONCOLOR, which is nearest-neighbor-like.
+
+New setting:
+- Options/ScalingFilter defaults to 1, matching current bicubic behavior.
+- Settings.SCALING_NONE = -1
+- Settings.SCALING_BICUBIC = 1
+- Settings.SCALING_LANCZOS = 5
+
+View menu:
+- Added checkable menu commands:
+  - Scaling: None
+  - Scaling: Bicubic
+  - Scaling: Lanczos
+- These are normal commands and appear in the Options > Keys command list, so they can be assigned shortcuts.
+
+Notes:
+- Lanczos is the visually best FreeImage filter available here and should be best for high-quality downscaling.
+- None uses the fast/no-pre-rescale Windows paint path, effectively nearest-neighbor/pixelated scaling.
+- Bicubic remains the default to preserve existing behavior.
+- I briefly tested replacing quivilib/model/canvas.pyc, but the decompiled source had unsafe control-flow reconstruction. That entry was restored from backup and is unchanged in the final archive.
+
+Verification:
+- Python 2.6 compile: RC=0
+- Scaling settings test:
+  SCALING_DEFAULT=1 BICUBIC=1 LANCZOS=5 NONE=-1
+  RC=0
+- library.zip integrity: python -m zipfile -t library.zip -> Done testing
+- Packaged menu bytecode contains the new "Scaling:" and "Lanczos" labels.
+- Real quivi.exe smoke with animated GIF:
+  RUNNING Title=sample-512-80.gif - Quivi
+  CLOSED
+  quivi.log length 0
+  error.log length 0
+
+Source-level summary:
+- quivilib/model/settings.py:
+  - added scaling constants and default Options/ScalingFilter.
+- quivilib/model/image/freeimage.py:
+  - FreeImage.resize now uses self.scaling_filter instead of hard-coded FILTER_BICUBIC.
+  - scaling_filter = -1 uses the existing Windows no-pre-rescale paint path.
+- quivilib/control/canvas.py:
+  - applies the scaling setting to loaded images.
+  - adds set_scaling_filter and update handlers for checkable menu items.
+- quivilib/control/menu.py:
+  - adds the three View menu commands.
+  - fixes two bad uncompyle6 list-comprehension reconstructions before compiling.

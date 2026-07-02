@@ -1,0 +1,54 @@
+Binary change: library.zip
+==========================
+
+Purpose
+-------
+Allow Quivi's bundled pyfreeimage wrapper to start with FreeImage 3.18.0.
+FreeImage 3.18.0 exports WebP support, but it removed the legacy
+_FreeImage_RotateClassic@12 export that Quivi binds during startup.
+
+Changed file
+------------
+library.zip
+
+Backup
+------
+backups/library.zip.before-rotateclassic-binding-patch.bak
+
+Old archive
+-----------
+Name: library.zip
+SHA256: 61594DC4F4CDF547A46B11DB535680EDCF68354D8438E914C2BF2E1700295278
+
+New archive
+-----------
+Name: library.zip
+SHA256: 97D0E6D9C1B2B3CE1B54FC9E2A9770E3D46E14B2DD9021C340A018B272DDD878
+
+Patched entry
+-------------
+pyfreeimage/funct_list.pyc
+
+Byte-preserving patch
+---------------------
+The marshalled string constant:
+
+    FreeImage_RotateClassic
+
+was replaced with the same-length string:
+
+    FreeImage_MakeThumbnail
+
+This avoids binding the missing RotateClassic export at startup. The resulting
+function list has a duplicate MakeThumbnail entry and no RotateClassic entry.
+
+Known caveat
+------------
+Quivi's image rotation action will still need a follow-up patch, because
+pyfreeimage/image.pyc still calls self._lib.RotateClassic when rotation is used.
+Static WebP opening is unaffected.
+
+Verification
+------------
+quivi.exe startup: stayed open for 5 seconds, no new log entry.
+quivi.exe sample-static.webp: stayed open for 5 seconds, no new log entry.

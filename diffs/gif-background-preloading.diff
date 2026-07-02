@@ -1,0 +1,175 @@
+GIF background preloading diff
+Generated: 2026-06-11T23:19:20.108275
+
+Changed artifact: library.zip
+Backup used for comparison: backups/library.zip.before-gif-background-preload.20260611-231640.bak
+
+Reference note: this patch mirrors the buffering approach used by dedicated animation viewers: preload frames after opening instead of blocking initial load.
+
+Archive hashes:
+old f3870202e1933574f543bb936a3fbc9a96382656c27dbc42523d010b1cc276a3  backups/library.zip.before-gif-background-preload.20260611-231640.bak
+new 2f59c67931d25e132ada697b0fdef889edd5c17cb9284f84c8cde8411cdbf02a  library.zip
+
+Entry hashes:
+old 88f6fbe02c70720ee5698c0650e7b3290bf1044eaf886abee5d6beef7ce43dac  pyfreeimage/image.pyc
+new 7580a18c5d921d0fbe4c3ccf10fb27d29b941c0c66e0bb69fd7d364b4d2431de  pyfreeimage/image.pyc
+old 4257235d2c1d5b7e161f1f2ff5a2c17246c089a5fa04ffb18f1b751cb16d0e0b  quivilib/model/image/freeimage.pyc
+new 1dbeefec6979e72b2ed27e3faea24ebcfbebad56dfcb44828dfc79ccb8eb2a59  quivilib/model/image/freeimage.pyc
+old bbf9fa797239a7fca3ab3f852db7621b325d87f6c09b2c2fe3bc7945a401262d  quivilib/model/image/__init__.pyc
+new bbf9fa797239a7fca3ab3f852db7621b325d87f6c09b2c2fe3bc7945a401262d  quivilib/model/image/__init__.pyc
+old f6db05ff4246697e0853336bae0f09c27c456d752b28056be8b0f82ea0ff8ed1  quivilib/control/canvas.pyc
+new bae7209e7651c240f9f0e4c29fc128663513c7b2e351337544193b55b08cfd27  quivilib/control/canvas.pyc
+
+Summary:
+- AnimatedImage now has a daemon background preloader that fills lazy frame caches after playback starts.
+- Frame materialization is protected with an RLock so playback and preload do not race the same frame slot.
+- Quivi starts preloading when animation begins and whenever resize creates a scaled animated cache.
+- This intentionally uses more CPU/RAM after open to reduce first-pass playback stutter.
+
+Verification:
+- Background preload test: 512x512 80-frame scaled GIF moved from PRELOAD=1 to PRELOAD=44 after 1 second, RC=0.
+- Lazy transform test: CONVERT_LOADED=1,1,2 and COMPOSITE_LOADED=1, RC=0.
+- Lazy resize test: FRAMES=3, LOADED=1,1,2, NEXT=180, RC=0.
+- 512x512 80-frame timing test: LOAD_SEC=0.013, RESCALE_CREATE_SEC=0.009, FIRST_FRAME_SEC=0.000, NEXT5_SEC=0.107.
+- Quivi GUI smoke test with 512x512 80-frame GIF: no new quivi.exe.log entry.
+
+Source-level diff from decompiled pyc:
+diff --git a/.codex_tmp/diff_old_preload_src/pyfreeimage_image.py b/.codex_tmp/diff_current_preload_src/pyfreeimage_image.py
+index fcfffc1..ca757c6 100644
+--- a/.codex_tmp/diff_old_preload_src/pyfreeimage_image.py
++++ b/.codex_tmp/diff_current_preload_src/pyfreeimage_image.py
+@@ -2,11 +2,11 @@
+ # Python bytecode version base 2.6 (62161)
+ # Decompiled from: Python 3.11.1 (tags/v3.11.1:a7a450f, Dec  6 2022, 19:58:39) [MSC v.1934 64 bit (AMD64)]
+ # Embedded file name: pyfreeimage\image.pyc
+-# Compiled at: 2026-06-11 23:09:30
++# Compiled at: 2026-06-11 23:16:56
+ from __future__ import absolute_import
+ import pyfreeimage.library as library, pyfreeimage.constants as CO
+ from pyfreeimage.buffer import FileIO
+-import ctypes, logging as log, os, shutil, tempfile
++import ctypes, logging as log, os, shutil, tempfile, threading, time
+ 
+ class Image(object):
+ 
+@@ -352,9 +352,20 @@ class AnimatedImage(object):
+         self.multi = multi
+         self.cleanup_path = cleanup_path
+         self._lib = library.load()
++        self._lock = threading.RLock()
++        self._preload_started = False
+         return
+ 
+     def _ensure_frame(self, index):
++        self._lock.acquire()
++        try:
++            return self._ensure_frame_locked(index)
++        finally:
++            self._lock.release()
++
++        return
++
++    def _ensure_frame_locked(self, index):
+         if self.frames[index] is None:
+             if self.source is not None:
+                 frame = self.source._ensure_frame(index)
+@@ -388,6 +399,32 @@ class AnimatedImage(object):
+             self.frames[index] = frame
+         return self.frames[index]
+ 
++    def preload_frames(self):
++        if self._preload_started:
++            return
++        self._preload_started = True
++
++        def preload():
++            try:
++                total = len(self.frames)
++                idx = (self.index + 1) % total
++                seen = 0
++                while seen < total:
++                    self._ensure_frame(idx)
++                    idx = (idx + 1) % total
++                    seen += 1
++                    time.sleep(0.001)
++
++            except Exception:
++                pass
++
++            return
++
++        t = threading.Thread(target=preload)
++        t.setDaemon(True)
++        t.start()
++        return
++
+     @property
+     def current(self):
+         return self._ensure_frame(self.index)
+diff --git a/.codex_tmp/diff_old_preload_src/quivilib_control_canvas.py b/.codex_tmp/diff_current_preload_src/quivilib_control_canvas.py
+index f94d0a5..73d2d07 100644
+--- a/.codex_tmp/diff_old_preload_src/quivilib_control_canvas.py
++++ b/.codex_tmp/diff_current_preload_src/quivilib_control_canvas.py
+@@ -2,7 +2,7 @@
+ # Python bytecode version base 2.6 (62161)
+ # Decompiled from: Python 3.11.1 (tags/v3.11.1:a7a450f, Dec  6 2022, 19:58:39) [MSC v.1934 64 bit (AMD64)]
+ # Embedded file name: quivilib\control\canvas.pyc
+-# Compiled at: 2026-06-11 22:48:33
++# Compiled at: 2026-06-11 23:17:14
+ from __future__ import with_statement, absolute_import
+ from quivilib.model.settings import Settings
+ from quivilib.resources import images
+@@ -50,7 +50,12 @@ class CanvasController(object):
+         self._stop_animation()
+         img = self.canvas.img
+         if img and getattr(img, 'is_animated', False):
+-            self.animation_call = wx.CallLater(max(int(img.frame_delay), 20), self.on_animation_timer)
++            try:
++                img.preload_animation()
++            except Exception:
++                pass
++            else:
++                self.animation_call = wx.CallLater(max(int(img.frame_delay), 20), self.on_animation_timer)
+         return
+ 
+     def on_canvas_image_loaded(self, message):
+diff --git a/.codex_tmp/diff_old_preload_src/quivilib_model_image_freeimage.py b/.codex_tmp/diff_current_preload_src/quivilib_model_image_freeimage.py
+index 7c4268c..114eeb4 100644
+--- a/.codex_tmp/diff_old_preload_src/quivilib_model_image_freeimage.py
++++ b/.codex_tmp/diff_current_preload_src/quivilib_model_image_freeimage.py
+@@ -2,7 +2,7 @@
+ # Python bytecode version base 2.6 (62161)
+ # Decompiled from: Python 3.11.1 (tags/v3.11.1:a7a450f, Dec  6 2022, 19:58:39) [MSC v.1934 64 bit (AMD64)]
+ # Embedded file name: quivilib\model\image\freeimage.pyc
+-# Compiled at: 2026-06-11 22:55:29
++# Compiled at: 2026-06-11 23:17:06
+ from __future__ import absolute_import
+ from quivilib.i18n import _
+ from quivilib.util import add_exception_custom_msg
+@@ -89,6 +89,8 @@ class FreeImage(object):
+                 self.zoomed_bmp = img
+         self.width = width
+         self.height = height
++        if self.is_animated and self.zoomed_bmp:
++            self.preload_animation()
+         return
+ 
+     def resize_by_factor(self, factor):
+@@ -111,6 +113,17 @@ class FreeImage(object):
+             self.bmp = self.img.convert_to_wx_bitmap(wx)
+         return delay
+ 
++    def preload_animation(self):
++        if not self.is_animated:
++            return
++        try:
++            target = self.zoomed_bmp if self.zoomed_bmp else self.img
++            target.preload_frames()
++        except Exception:
++            pass
++
++        return
++
+     def rotate(self, clockwise):
+         self.rotation += 1 if clockwise else -1
+         self.rotation %= 4

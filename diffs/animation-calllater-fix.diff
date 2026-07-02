@@ -1,0 +1,89 @@
+Binary/source change: animation timer CallLater fix
+===================================================
+
+Purpose
+-------
+Replace the first animated GIF repaint loop, which used wx.Timer event binding,
+with a one-shot wx.CallLater loop. GIF frames decoded correctly, but the timer
+path did not advance the visible image in live testing.
+
+Changed file
+------------
+library.zip
+
+Backup
+------
+backups/library.zip.before-animation-calllater-fix.bak
+
+Archive hashes
+--------------
+Old library.zip SHA256: 28B4EA1E6C32B69282AA44E90CF58E16A1A55AA6F7355313D50D7201466D0D97
+New library.zip SHA256: C91FCD2F727377BF30CCF8A73EAFEE269CA06C5BAC1B6CCE0B1AF192CB7C11DC
+
+Replaced entry
+--------------
+quivilib/control/canvas.pyc
+  old SHA256: 1E295B209E83072A71BACAA9FA37BA16A6829BFBF2D9718A3ED938E78D0BA7DA
+  new SHA256: 42A619FBCFE437F81F2099D82E587E343A744CA9FCACDF500CD9CD707DAF945C
+
+Verification
+------------
+quivi.exe sample-animated.gif: stayed open 8 seconds, no new log entry.
+
+Source-level diff
+-----------------
+--- a/quivilib/control/canvas.py
++++ b/quivilib/control/canvas.py
+@@ -22,8 +22,7 @@
+         Publisher.subscribe(self.on_canvas_mouse_motion, '%s.mouse.motion' % self.name)
+         Publisher.subscribe(self.on_canvas_image_loaded, '%s.image.loaded' % self.name)
+         Publisher.subscribe(self.on_program_closed, 'program.closed')
+-        self.animation_timer = wx.Timer(self.view.panel)
+-        self.view.panel.Bind(wx.EVT_TIMER, self.on_animation_timer, self.animation_timer)
++        self.animation_call = None
+         self._moving_image = False
+         self._moved_image = False
+         self._old_mouse_pos = (-1, -1)
+@@ -33,15 +32,20 @@
+         return
+ 
+     def _stop_animation(self):
+-        if self.animation_timer.IsRunning():
+-            self.animation_timer.Stop()
++        if self.animation_call:
++            try:
++                self.animation_call.Stop()
++            except Exception:
++                pass
++            else:
++                self.animation_call = None
+         return
+ 
+     def _start_animation(self):
+         self._stop_animation()
+         img = self.canvas.img
+         if img and getattr(img, 'is_animated', False):
+-            self.animation_timer.Start(max(int(img.frame_delay), 20), True)
++            self.animation_call = wx.CallLater(max(int(img.frame_delay), 20), self.on_animation_timer)
+         return
+ 
+     def on_canvas_image_loaded(self, message):
+@@ -52,7 +56,8 @@
+         self._stop_animation()
+         return
+ 
+-    def on_animation_timer(self, event):
++    def on_animation_timer(self):
++        self.animation_call = None
+         img = self.canvas.img
+         if not img or not getattr(img, 'is_animated', False):
+             self._stop_animation()
+@@ -60,7 +65,7 @@
+         else:
+             delay = img.advance_frame()
+             Publisher.sendMessage('%s.changed' % self.name, None)
+-            self.animation_timer.Start(max(int(delay), 20), True)
++            self.animation_call = wx.CallLater(max(int(delay), 20), self.on_animation_timer)
+             return
+ 
+     def on_canvas_painted(self, message):

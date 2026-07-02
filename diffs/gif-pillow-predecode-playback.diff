@@ -1,0 +1,84 @@
+GIF Pillow predecode playback diff
+Generated: 2026-07-02T00:51:00+08:00
+
+Changed artifacts:
+- library.zip
+- webp_extract_pillow.py
+- webp_extract_pillow.exe
+
+Backups:
+- backups\library.zip.before-gif-pillow-predecode.20260702-003832.bak
+- backups\webp_extract_pillow.py.before-gif-predecode.20260702-003834.bak
+- backups\webp_extract_pillow.exe.before-gif-predecode.20260702-003834.bak
+
+Archive hashes:
+old 2ba3b9ace1587614d6e33d99e032acdc99cb954da879554a4e6fc532617f7518  backups\library.zip.before-gif-pillow-predecode.20260702-003832.bak
+new 7a75048d12bffa32b44cbf08dc5cfbbcf0772a18a75958e392d9087c846b69b9  library.zip
+
+Helper hashes:
+old 6952d7b08c1583f28d1dbfbb865f573838b1925744828ebaae9568b6033ed920  backups\webp_extract_pillow.py.before-gif-predecode.20260702-003834.bak
+new 6a695ece94c7a1d0f3be9392d130ef4926824e5bef444a15b18711574974b99a  webp_extract_pillow.py
+old 829c14e81cdd83899e9935817e83abbe42a519ce54e3abf361dd2d7beb56ffb7  backups\webp_extract_pillow.exe.before-gif-predecode.20260702-003834.bak
+new 7e2cc5cfdce16fa09915d0abf4909c46eb891e0a65c82e7de6151bd2bc07a3b5  webp_extract_pillow.exe
+
+Entry hashes:
+old b75fa2cc1090b69135b35024b94cd7232323b7a4573a3bb8a674c9b8bc181214  pyfreeimage/image.pyc
+new bb21bd4be438afd5d94f576e4e3971f63f8e5083fc94291b3db7d20b6d7df40f  pyfreeimage/image.pyc
+old 35ee0e9f940499e34df1261b38b16554303be5400fe4e9e8da81ae946ce30bce  quivilib/model/image/__init__.pyc
+new 8e62068dcfe08dccf9adf2461c64f22300eeba47da1d63ad85d7e9c89ba1404f  quivilib/model/image/__init__.pyc
+old 54fb0f6032eea6233faf1b99604170339ba9a9bffa99f593a910cb50580cea01  quivilib/control/canvas.pyc
+new 60728b530b010acfdd9b077efce2f836870df4d733bdfb2d664444697916a8fb  quivilib/control/canvas.pyc
+
+Summary:
+- GIFs now try the bundled Pillow helper predecode path before GDI+/FreeImage streaming fallback.
+- The helper now writes delays.txt with per-frame delays, so GIF timing comes from Pillow metadata.
+- Animated WebP still uses Quivi's RIFF delay parser because Pillow reported the first test WebP frame delay as 100 ms instead of the expected 63 ms.
+- GIF dispatch now prefers FreeImage first so the helper-backed predecoded animation path is used.
+- The animation scheduler now joins its worker briefly during stop/shutdown to avoid Python 2 daemon-thread shutdown messages.
+
+Expected behavior tradeoff:
+- GIFs may load for longer up front, similar to the fork and similar to our animated WebP path.
+- Playback should then be smoother because frame advance no longer decodes/composes frames during steady playback.
+
+Verification:
+- Helper exe, GIF, Python removed from PATH:
+  GIF_HELPER_RC=0 FRAMES=80 DELAYS=40,40,40,40,40,40
+- Helper exe, WebP, Python removed from PATH:
+  WEBP_HELPER_RC=0 FRAMES=49
+- Python 2.6 GIF timing:
+  FRAMES=80
+  LOAD_SEC=3.093
+  NEXT5_SEC=0.026
+  RC=0
+- Python 2.6 animated WebP with Python removed from PATH:
+  FRAMES=49 SIZE=1264x720 DELAYS=63,62,63,62,63,62 LOAD_SEC=4.307
+  NEXT=62
+  RC=0
+  WRAPPER_RC=0
+- Quivi FreeImage WebP wrapper:
+  CLASS=FreeImage ANIM=True SIZE=1264x720 DELAY=63
+  NEXT=62
+  RC=0
+- Real quivi.exe smoke:
+  GIF_RUNNING Title=sample-512-80.gif - Quivi
+  GIF_CLOSED
+  WEBP_RUNNING Title=001_1_1.webp - Quivi
+  WEBP_CLOSED
+- Final logs:
+  %APPDATA%\Quivi\quivi.log length 0
+  %APPDATA%\Quivi\error.log length 0
+- library.zip integrity: python -m zipfile -t library.zip -> Done testing
+
+Source-level diff summary:
+- webp_extract_pillow.py:
+  - accepts generic INPUT_ANIMATION
+  - exports frame_XXXX.bmp files
+  - writes delays.txt
+- pyfreeimage/image.py:
+  - routes .gif through _load_pillow_animation first
+  - keeps FreeImage GIF fallback on helper failure
+  - routes .webp through the same helper frame extraction while preserving RIFF-parsed WebP delays
+- quivilib/model/image/__init__.py:
+  - prefers FreeImage before GDI+ for .gif so the helper predecode path is selected
+- quivilib/control/canvas.py:
+  - joins the animation scheduler worker during stop/shutdown

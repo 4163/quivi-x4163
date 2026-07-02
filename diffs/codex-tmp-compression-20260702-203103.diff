@@ -1,0 +1,13 @@
+# Quivi Temporary Data Compression
+
+Compressed `.codex_tmp/` into `.codex_tmp.zip` using standard ZIP compression.
+
+The archive was verified by opening it through .NET's ZIP reader and counting entries before the expanded folder was removed.
+
+Verification result:
+
+```text
+ZIP_ENTRIES=10217
+```
+
+The ZIP format was chosen because it is easy for coding agents and Windows PowerShell to inspect or extract quickly with `Expand-Archive`.

@@ -1,0 +1,87 @@
+Animated WebP helper no-console diff
+Generated: 2026-07-02T00:05:00+08:00
+
+Changed artifact: library.zip
+Old archive: backups\library.zip.before-webp-helper-no-console.20260701-235738.bak
+New archive: library.zip
+
+Archive hashes:
+old 69ce64d3b83814a12301a688182736fd8f140637eb1a4815ca033d2bf02d1b25  backups\library.zip.before-webp-helper-no-console.20260701-235738.bak
+new 12bff7d3d2a91e6fe1a5706ce714c53090ed5694aa679361d04c584480b2af99  library.zip
+
+Entry hashes:
+old 2b32a3d003a5c5895c117c75920cab9d040ebbb19fa08cb22f3fe8eefa22b88d  pyfreeimage/image.pyc
+new edb28fcf4e922a301ee2ff53171ea7409ffaa776af1f3a2355ae389ba0656cb2  pyfreeimage/image.pyc
+
+Summary:
+- Animated WebP frame extraction now prefers pythonw.exe, which does not create a console window.
+- On Windows, the helper subprocess is also launched with STARTUPINFO/SW_HIDE and CREATE_NO_WINDOW.
+- Animated WebP decoding behavior is unchanged.
+
+Verification:
+- Python 2.6 animated WebP helper test:
+  FRAMES=49 SIZE=1264x720 DELAYS=63,62,63,62,63,62 LOAD_SEC=4.781
+  NEXT=62
+  RC=0
+- Python 2.6 Quivi FreeImage wrapper test:
+  CLASS=FreeImage ANIM=True SIZE=1264x720 DELAY=63
+  NEXT=62
+  RC=0
+- library.zip integrity: python -m zipfile -t library.zip -> Done testing
+- Quivi real-exe smoke with "<animated-webp-sample>":
+  RUNNING Title=001_1_1.webp - Quivi
+  error.log remained 0 bytes
+
+Source-level diff:
+diff --git a/.codex_tmp/src/pyfreeimage/image.py b/.codex_tmp/src/pyfreeimage/image.py
+--- a/.codex_tmp/src/pyfreeimage/image.py
++++ b/.codex_tmp/src/pyfreeimage/image.py
+@@
+             env = os.environ.copy()
+             env.pop('PYTHONHOME', None)
+             env.pop('PYTHONPATH', None)
+-            rc = subprocess.call(['python', helper, path, out_dir], env=env)
++            python_exe = cls._get_webp_helper_python()
++            popen_kwargs = cls._get_hidden_subprocess_kwargs()
++            popen_kwargs['env'] = env
++            rc = subprocess.call([python_exe, helper, path, out_dir], **popen_kwargs)
+             if rc:
+                 raise RuntimeError('Animated WebP helper failed')
+@@
+             except Exception:
+                 pass
+ 
++    @staticmethod
++    def _get_webp_helper_python():
++        for name in ('pythonw.exe', 'python.exe', 'pythonw', 'python'):
++            path = None
++            try:
++                import sys
++                base = os.path.dirname(sys.executable)
++                path = os.path.join(base, name)
++            except Exception:
++                pass
++            if path and os.path.isfile(path):
++                return path
++        return 'pythonw.exe'
++
++    @staticmethod
++    def _get_hidden_subprocess_kwargs():
++        kwargs = {}
++        if os.name != 'nt':
++            return kwargs
++        try:
++            startupinfo = subprocess.STARTUPINFO()
++            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
++            startupinfo.wShowWindow = 0
++            kwargs['startupinfo'] = startupinfo
++        except Exception:
++            pass
++        try:
++            kwargs['creationflags'] = 134217728
++        except Exception:
++            pass
++        return kwargs
++
+     @staticmethod
+     def _read_webp_animation_info(path):

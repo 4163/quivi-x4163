@@ -1,0 +1,50 @@
+Binary change: FreeImage.dll
+================================
+
+Purpose
+-------
+Replace Quivi's bundled FreeImage runtime with a WebP-capable x86 FreeImage
+runtime so static .webp files can be detected and decoded through the existing
+pyfreeimage loader.
+
+Changed file
+------------
+FreeImage.dll
+
+Backup
+------
+backups/FreeImage.dll.2008-before-webp.bak
+
+Old binary
+----------
+Name: FreeImage.dll
+Version/date in workspace: 2008-era bundled runtime
+Size: 2,084,864 bytes
+PE machine: 0x14c (x86)
+SHA256: 5F24CB61DEAFE4955631D4FF69A9FE0717679A959DBA8DD5A289961C1F6B5E6F
+WebP marker strings: not present
+
+New binary
+----------
+Name: FreeImage.dll
+Source artifact: imageio-binaries freeimage/FreeImage-3.18.0-win32.dll
+Confirmed identical to official FreeImage 3.18.0 x32 binary distribution:
+https://sourceforge.net/projects/freeimage/files/Binary%20Distribution/3.18.0/FreeImage3180Win32Win64.zip/download
+Official ZIP SHA1: 1CD79A8FA045D0B599F3B55BE50EDAA27D19BDDA
+Official ZIP MD5: 393D3DF75B14CBCB4887DA1C395596E2
+FreeImage version reported by DLL: 3.18.0
+Size: 6,018,560 bytes
+PE machine: 0x14c (x86)
+SHA256: F5914CF345F20177203E72987ECA4A442DDD50934EB6273AA433C177E9640A41
+WebP readable extension check: WEBP:webp
+Static WebP load check: sample-static.webp loaded as 8x6 via FreeImage_Load
+
+Compatibility note
+------------------
+FreeImage 3.18.0 no longer exports the old _FreeImage_RotateClassic@12 symbol
+that Quivi's bundled pyfreeimage wrapper tries to bind at startup. See
+pyfreeimage-rotateclassic-binding.diff for the companion library.zip patch.
+
+Unified diff equivalent
+-----------------------
+Binary files backups/FreeImage.dll.2008-before-webp.bak and FreeImage.dll differ.

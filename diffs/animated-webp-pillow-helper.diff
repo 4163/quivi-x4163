@@ -1,0 +1,176 @@
+Animated WebP Pillow helper diff
+Generated: 2026-07-01T23:30:47.147812
+
+Changed artifact: library.zip
+Old archive: backups\library.zip.before-animated-webp-pillow-helper.20260617-182301.bak
+New archive: library.zip
+
+Archive hashes:
+old b1f8cf73c59ff243ce463c97386bc9182964c38f08a2b379923939db49307468  backups\library.zip.before-animated-webp-pillow-helper.20260617-182301.bak
+new 815141e23b01ff5c43c58dfae81d6ccec7837ab20cb2668be30b43b1db959dd5  library.zip
+
+Entry hashes:
+old fb2979bff9c81e69dab6ed6c81061331baff8098c2b5bad348c60bfe8218619a  pyfreeimage/image.pyc
+new 2b32a3d003a5c5895c117c75920cab9d040ebbb19fa08cb22f3fe8eefa22b88d  pyfreeimage/image.pyc
+old d57423e6bc32d72463e208e3fdb8347853b7757afc6b11a45c94d3d8cf5f0ad2  quivilib/model/image/freeimage.pyc
+new c4f5b5a00cffd75eb366a21e8f686c50c074f5e941caa7df6be6c6596bcf737a  quivilib/model/image/freeimage.pyc
+old c0360625a9288f66292073724f1536cc50e38c3da985b3319c5ab3437014ee90  quivilib/model/image/gdiplus.pyc
+new c0360625a9288f66292073724f1536cc50e38c3da985b3319c5ab3437014ee90  quivilib/model/image/gdiplus.pyc
+old 35ee0e9f940499e34df1261b38b16554303be5400fe4e9e8da81ae946ce30bce  quivilib/model/image/__init__.pyc
+new 35ee0e9f940499e34df1261b38b16554303be5400fe4e9e8da81ae946ce30bce  quivilib/model/image/__init__.pyc
+old 094df55cc21b2f02cbb58e072aa00dc84a2088cd519c8424ef1b58edaab3e725  quivilib/control/canvas.pyc
+new 094df55cc21b2f02cbb58e072aa00dc84a2088cd519c8424ef1b58edaab3e725  quivilib/control/canvas.pyc
+
+Summary:
+- Animated WebP RIFF/ANMF chunks are detected before FreeImage static fallback
+- Animated WebP frames are extracted through webp_extract_pillow.py using Python 3 Pillow
+- Extracted BMP frames are loaded into Quivi's existing AnimatedImage frame model
+- FreeImage wrapper now attempts animated loading for .webp as well as .gif
+
+Verification:
+- Container parser test: samples are VP8X/ANIM/ANMF, 1264x720, 49 frames, 63/62 ms delays
+- FreeImage multipage test showed WebP reports only one page, so native FreeImage animation is unavailable
+- Embedded Python 2.6 loader test: FRAMES=49, SIZE=1264x720, DELAYS=63,62,63,62,63,62, LOAD_SEC=3.303, NEXT=62
+- Quivi FreeImage wrapper zipimport test: ANIM=True, SIZE=1264x720, DELAY=63, NEXT=62
+
+Source-level diff from decompiled pyc:
+diff --git "a/.codex_tmp\\animated-webp-pillow-helper_old_src/pyfreeimage_image.py" "b/.codex_tmp\\animated-webp-pillow-helper_new_src/pyfreeimage_image.py"
+index 3783d75..efdecc1 100644
+--- "a/.codex_tmp\\animated-webp-pillow-helper_old_src/pyfreeimage_image.py"
++++ "b/.codex_tmp\\animated-webp-pillow-helper_new_src/pyfreeimage_image.py"
+@@ -2,11 +2,11 @@
+ # Python bytecode version base 2.6 (62161)
+ # Decompiled from: Python 3.11.1 (tags/v3.11.1:a7a450f, Dec  6 2022, 19:58:39) [MSC v.1934 64 bit (AMD64)]
+ # Embedded file name: pyfreeimage\image.pyc
+-# Compiled at: 2026-06-12 12:39:35
++# Compiled at: 2026-06-17 18:24:30
+ from __future__ import absolute_import
+ import pyfreeimage.library as library, pyfreeimage.constants as CO
+ from pyfreeimage.buffer import FileIO
+-import ctypes, logging as log, os, shutil, tempfile, threading, time
++import ctypes, logging as log, os, shutil, subprocess, tempfile, threading, time
+ 
+ class Image(object):
+ 
+@@ -271,11 +271,14 @@ class AnimatedImage(object):
+                 try:
+                     load_path = path.encode('ascii')
+                 except UnicodeEncodeError:
+-                    (fd, cleanup_path) = tempfile.mkstemp(suffix='.gif')
++                    suffix = os.path.splitext(path)[1] or '.img'
++                    (fd, cleanup_path) = tempfile.mkstemp(suffix=suffix)
+                     os.close(fd)
+                     shutil.copyfile(path, cleanup_path)
+                     load_path = cleanup_path
+ 
++            if unicode(path).lower().endswith('.webp'):
++                return cls._load_animated_webp(load_path)
+             fif = lib.GetFIFFromFilename(load_path)
+             if fif == CO.FIF_UNKNOWN or not lib.FIFSupportsReading(fif):
+                 raise RuntimeError('Unable to open animated image')
+@@ -322,6 +325,80 @@ class AnimatedImage(object):
+             raise RuntimeError('Unable to load animation frames')
+         return cls(frames, delays, multi=multi, cleanup_path=cleanup_path)
+ 
++    @classmethod
++    def _load_animated_webp(cls, path):
++        info = cls._read_webp_animation_info(path)
++        if not info or info[0] <= 1:
++            raise RuntimeError('Image is not animated')
++        (count, delays) = info
++        helper = os.path.abspath(os.path.join(os.getcwd(), 'webp_extract_pillow.py'))
++        if not os.path.isfile(helper):
++            raise RuntimeError('Animated WebP helper is missing')
++        out_dir = tempfile.mkdtemp(prefix='quivi_webp_')
++        try:
++            env = os.environ.copy()
++            env.pop('PYTHONHOME', None)
++            env.pop('PYTHONPATH', None)
++            rc = subprocess.call(['python', helper, path, out_dir], env=env)
++            if rc:
++                raise RuntimeError('Animated WebP helper failed')
++            frame_paths = []
++            for name in os.listdir(out_dir):
++                if name.lower().endswith('.bmp'):
++                    frame_paths.append(os.path.join(out_dir, name))
++
++            frame_paths.sort()
++            if len(frame_paths) != count:
++                count = len(frame_paths)
++                delays = (delays + [100] * count)[:count]
++            frames = []
++            for frame_path in frame_paths:
++                f = open(frame_path, 'rb')
++                try:
++                    frames.append(Image.load_from_file(f, frame_path))
++                finally:
++                    f.close()
++
++            if len(frames) <= 1:
++                raise RuntimeError('Image is not animated')
++            return cls(frames, delays[:len(frames)])
++        finally:
++            try:
++                shutil.rmtree(out_dir)
++            except Exception:
++                pass
++
++        return
++
++    @staticmethod
++    def _read_webp_animation_info(path):
++        f = open(path, 'rb')
++        try:
++            data = f.read()
++        finally:
++            f.close()
++
++        if len(data) < 16 or data[:4] != 'RIFF' or data[8:12] != 'WEBP':
++            return
++        else:
++            delays = []
++            offset = 12
++            while offset + 8 <= len(data):
++                fourcc = data[offset:offset + 4]
++                size = ord(data[offset + 4]) | ord(data[offset + 5]) << 8 | ord(data[offset + 6]) << 16 | ord(data[offset + 7]) << 24
++                payload = data[offset + 8:offset + 8 + size]
++                if fourcc == 'ANMF' and len(payload) >= 16:
++                    delay = ord(payload[12]) | ord(payload[13]) << 8 | ord(payload[14]) << 16
++                    if delay < 20:
++                        delay = 100
++                    delays.append(delay)
++                offset += 8 + size + (size & 1)
++
++            if not delays:
++                return
++            return (
++             len(delays), delays)
++
+     @staticmethod
+     def _get_frame_delay(lib, dib):
+         tag = ctypes.c_void_p()
+diff --git "a/.codex_tmp\\animated-webp-pillow-helper_old_src/quivilib_model_image_freeimage.py" "b/.codex_tmp\\animated-webp-pillow-helper_new_src/quivilib_model_image_freeimage.py"
+index 9ea626a..58c802b 100644
+--- "a/.codex_tmp\\animated-webp-pillow-helper_old_src/quivilib_model_image_freeimage.py"
++++ "b/.codex_tmp\\animated-webp-pillow-helper_new_src/quivilib_model_image_freeimage.py"
+@@ -2,7 +2,7 @@
+ # Python bytecode version base 2.6 (62161)
+ # Decompiled from: Python 3.11.1 (tags/v3.11.1:a7a450f, Dec  6 2022, 19:58:39) [MSC v.1934 64 bit (AMD64)]
+ # Embedded file name: quivilib\model\image\freeimage.pyc
+-# Compiled at: 2026-06-12 12:36:45
++# Compiled at: 2026-06-17 18:23:40
+ from __future__ import absolute_import
+ from quivilib.i18n import _
+ from quivilib.util import add_exception_custom_msg
+@@ -22,7 +22,7 @@ class FreeImage(object):
+             if img is None:
+                 fi.library.load().reset_last_error()
+                 path_str = unicode(path) if path else u''
+-                if path_str.lower().endswith('.gif') and os.path.isfile(path_str):
++                if path_str.lower().endswith(('.gif', '.webp')) and os.path.isfile(path_str):
+                     try:
+                         img = AnimatedImage.load(path_str)
+                     except Exception:
+
+Additional file:
+new 6952d7b08c1583f28d1dbfbb865f573838b1925744828ebaae9568b6033ed920  webp_extract_pillow.py

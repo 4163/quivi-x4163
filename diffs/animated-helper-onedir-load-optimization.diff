@@ -1,0 +1,164 @@
+Animated GIF/WebP initial-load optimization
+===========================================
+
+Date: 2026-07-02
+
+Purpose
+-------
+Reduce animated GIF and animated WebP initial loading time without changing the
+animation playback architecture.
+
+The previous bundled helper was a PyInstaller one-file executable. It worked on
+fresh Windows installs, but each launch paid the one-file self-extract/startup
+cost. This change adds a PyInstaller onedir helper runtime and updates Quivi's
+animation loader to prefer it, while leaving the one-file helper as a fallback.
+
+Changed files
+-------------
+- library.zip
+  - Updated pyfreeimage/image.pyc.
+  - The animation loader now prefers:
+    1. webp_extract_pillow_runtime/webp_extract_pillow/webp_extract_pillow.exe
+    2. webp_extract_pillow.exe
+    3. webp_extract_pillow.py via python/pythonw
+  - Added optional QUIVI_ANIM_PROFILE timing support. It is silent unless the
+    environment variable is set.
+
+- webp_extract_pillow.py
+  - Added optional QUIVI_ANIM_PROFILE timing output to profile.txt in the helper
+    output directory.
+  - Tracks total, seek, convert, and BMP save time.
+
+- webp_extract_pillow_runtime/webp_extract_pillow/
+  - New self-contained PyInstaller onedir helper runtime.
+  - Runtime size: 62 files, 29,501,578 bytes.
+
+- webp_extract_pillow.exe
+  - Kept as the fallback one-file helper.
+  - Hash is unchanged from the before-helper-onedir backup.
+
+Backups
+-------
+- backups/webp_extract_pillow.py.before-load-profile.20260702-011834.bak
+- backups/webp_extract_pillow.exe.before-load-profile.20260702-011834.bak
+- backups/library.zip.before-animation-load-profile.20260702-011834.bak
+- backups/library.zip.before-helper-onedir.20260702-012155.bak
+- backups/webp_extract_pillow.exe.before-helper-onedir.20260702-012155.bak
+
+Source-level summary
+--------------------
+In pyfreeimage/image.py:
+
+    helper_onedir_exe = os.path.abspath(os.path.join(
+        os.getcwd(), 'webp_extract_pillow_runtime', 'webp_extract_pillow',
+        'webp_extract_pillow.exe'))
+    helper_exe = os.path.abspath(os.path.join(os.getcwd(),
+        'webp_extract_pillow.exe'))
+    helper_script = os.path.abspath(os.path.join(os.getcwd(),
+        'webp_extract_pillow.py'))
+    helper_cmd = cls._get_webp_helper_command(helper_onedir_exe, helper_exe,
+        helper_script)
+
+    def _get_webp_helper_command(cls, helper_onedir_exe, helper_exe,
+                                 helper_script):
+        if os.path.isfile(helper_onedir_exe):
+            return [helper_onedir_exe]
+        if os.path.isfile(helper_exe):
+            return [helper_exe]
+        if os.path.isfile(helper_script):
+            return [cls._get_webp_helper_python(), helper_script]
+
+In webp_extract_pillow.py:
+
+    profile = os.environ.get("QUIVI_ANIM_PROFILE")
+    ...
+    if profile:
+        with open(os.path.join(out_dir, "profile.txt"), "w") as f:
+            f.write("frames=%d\n" % frame_count)
+            f.write("total=%.6f\n" % (time.time() - t0))
+            f.write("seek=%.6f\n" % seek_time)
+            f.write("convert=%.6f\n" % convert_time)
+            f.write("save=%.6f\n" % save_time)
+
+Measured effect
+---------------
+Profiling was done with QUIVI_ANIM_PROFILE enabled.
+
+One-file helper baseline:
+- GIF sample-512-80.gif: 2.264s total load
+  - helper subprocess: 2.097s
+  - BMP load into Quivi: 0.099s
+  - helper internal work: 0.938812s
+
+- Animated WebP 001_1_1.webp: 3.515s total load
+  - helper subprocess: 3.266s
+  - BMP load into Quivi: 0.200s
+  - helper internal work: 2.218338s
+
+Onedir helper:
+- GIF sample-512-80.gif: 1.385s total load
+  - helper subprocess: 1.198s
+  - BMP load into Quivi: 0.123s
+  - helper internal work: 1.004914s
+
+- Animated WebP 001_1_1.webp: 2.583s total load
+  - helper subprocess: 2.258s
+  - BMP load into Quivi: 0.244s
+  - helper internal work: 2.036246s
+
+Fresh-machine style test
+------------------------
+Python was removed from PATH for the loader tests.
+
+- GIF timing test:
+  LOAD_SEC=1.560
+  NEXT5_SEC=0.025
+  RC=0
+
+- Animated WebP helper test:
+  LOAD_SEC=2.498
+  NEXT=62
+  RC=0
+
+Validation
+----------
+- python -m zipfile -t library.zip
+  Result: Done testing
+
+Hashes
+------
+- library.zip
+  SHA256: 2A15133E3B205565C50463BCCD237064BCA817462C4CFD240C01091DD87AD2A0
+
+- backups/library.zip.before-helper-onedir.20260702-012155.bak
+  SHA256: C080910235B8EF2AC55CF0911B2DB9D65523024BA7A6B45DC8733F36833C7897
+
+- library.zip pyfreeimage/image.pyc before:
+  SHA256: 4cc37369e2c232ddde16cb79b948f9e96694a2006b25fc0579f4ecf263964880
+
+- library.zip pyfreeimage/image.pyc after:
+  SHA256: 84f5b2971163a1bc8f454d8174f55cba3b7245e4fd7a7eca4015fa3d7d8d90f3
+
+- webp_extract_pillow.py
+  SHA256: 1002139AC01AAC079DBDE4D77A9D70FBD7EC7F30A6A87097506D4E44FF8E5B4F
+
+- backups/webp_extract_pillow.py.before-load-profile.20260702-011834.bak
+  SHA256: 6A695ECE94C7A1D0F3BE9392D130EF4926824E5BEF444A15B18711574974B99A
+
+- webp_extract_pillow.exe
+  SHA256: EE299FF7D35FE50231A1BA525C996FBB5A94FA06C7775979355AEE3DB8A362C4
+
+- backups/webp_extract_pillow.exe.before-helper-onedir.20260702-012155.bak
+  SHA256: EE299FF7D35FE50231A1BA525C996FBB5A94FA06C7775979355AEE3DB8A362C4
+
+- webp_extract_pillow_runtime/webp_extract_pillow/webp_extract_pillow.exe
+  SHA256: D0805BA2E4EA8B6F24E61EDCC4D0C7FFE50542DBFD0319A529FF32E61F1C153A
+
+Notes
+-----
+This removes most of the avoidable helper startup overhead while preserving the
+current predecode-to-BMP flow. The remaining load time is mostly actual Pillow
+decode/convert/save work, so further major gains would likely require a larger
+structural change such as caching decoded frames between sessions, decoding into
+a faster intermediate format, or integrating the decoder more directly into the
+viewer process.

@@ -1,0 +1,114 @@
+GIF lazy transform hardening diff
+Generated: 2026-06-11T23:11:34.836152
+
+Changed artifact: library.zip
+Backup used for comparison: backups/library.zip.before-gif-lazy-transform-hardening.20260611-230911.bak
+
+Archive hashes:
+old 769957da5e930ae34eefb81ee4a86eb85dc6684054fe606d4f1557aaaa3b8f22  backups/library.zip.before-gif-lazy-transform-hardening.20260611-230911.bak
+new f3870202e1933574f543bb936a3fbc9a96382656c27dbc42523d010b1cc276a3  library.zip
+
+Entry hashes:
+old 582595176665d43452750fddda0f0fa175a17c12ac5875ff749fdcde01553fac  pyfreeimage/image.pyc
+new 88f6fbe02c70720ee5698c0650e7b3290bf1044eaf886abee5d6beef7ce43dac  pyfreeimage/image.pyc
+old 4257235d2c1d5b7e161f1f2ff5a2c17246c089a5fa04ffb18f1b751cb16d0e0b  quivilib/model/image/freeimage.pyc
+new 4257235d2c1d5b7e161f1f2ff5a2c17246c089a5fa04ffb18f1b751cb16d0e0b  quivilib/model/image/freeimage.pyc
+old bbf9fa797239a7fca3ab3f852db7621b325d87f6c09b2c2fe3bc7945a401262d  quivilib/model/image/__init__.pyc
+new bbf9fa797239a7fca3ab3f852db7621b325d87f6c09b2c2fe3bc7945a401262d  quivilib/model/image/__init__.pyc
+old f6db05ff4246697e0853336bae0f09c27c456d752b28056be8b0f82ea0ff8ed1  quivilib/control/canvas.pyc
+new f6db05ff4246697e0853336bae0f09c27c456d752b28056be8b0f82ea0ff8ed1  quivilib/control/canvas.pyc
+
+Summary:
+- AnimatedImage composite and bit-depth conversion now preserve lazy frame materialization.
+- This prevents transformation code from iterating over unloaded None frame slots on certain GIF pixel/transparent formats.
+
+Verification:
+- Lazy transform test: CONVERT_LOADED=1,1,2 and COMPOSITE_LOADED=1, RC=0.
+- Lazy resize test: FRAMES=3, LOADED=1,1,2, NEXT=180, RC=0.
+- Animated GIF decoder test: FRAMES=3, NEXT=180, RC=0.
+- 512x512 80-frame timing test: LOAD_SEC=0.014, RESCALE_CREATE_SEC=0.006, FIRST_FRAME_SEC=0.000, NEXT5_SEC=0.078.
+- Quivi GUI smoke test with 512x512 80-frame GIF: no new quivi.exe.log entry.
+
+Source-level diff from decompiled pyc:
+diff --git a/.codex_tmp/diff_old_lazy_harden_src/pyfreeimage_image.py b/.codex_tmp/diff_current_lazy_harden_src/pyfreeimage_image.py
+index 4f4a32f..fcfffc1 100644
+--- a/.codex_tmp/diff_old_lazy_harden_src/pyfreeimage_image.py
++++ b/.codex_tmp/diff_current_lazy_harden_src/pyfreeimage_image.py
+@@ -2,7 +2,7 @@
+ # Python bytecode version base 2.6 (62161)
+ # Decompiled from: Python 3.11.1 (tags/v3.11.1:a7a450f, Dec  6 2022, 19:58:39) [MSC v.1934 64 bit (AMD64)]
+ # Embedded file name: pyfreeimage\image.pyc
+-# Compiled at: 2026-06-11 22:59:27
++# Compiled at: 2026-06-11 23:09:30
+ from __future__ import absolute_import
+ import pyfreeimage.library as library, pyfreeimage.constants as CO
+ from pyfreeimage.buffer import FileIO
+@@ -339,7 +339,7 @@ class AnimatedImage(object):
+             delay = 100
+         return delay
+ 
+-    def __init__(self, frames, delays, source=None, resize_args=None, rotate_angle=None, multi=None, cleanup_path=None):
++    def __init__(self, frames, delays, source=None, resize_args=None, rotate_angle=None, convert_bits=None, composite_args=None, multi=None, cleanup_path=None):
+         self.frames = frames
+         self.delays = delays
+         self.index = 0
+@@ -347,6 +347,8 @@ class AnimatedImage(object):
+         self.source = source
+         self.resize_args = resize_args
+         self.rotate_angle = rotate_angle
++        self.convert_bits = convert_bits
++        self.composite_args = composite_args
+         self.multi = multi
+         self.cleanup_path = cleanup_path
+         self._lib = library.load()
+@@ -376,6 +378,13 @@ class AnimatedImage(object):
+                 frame = frame.rescale(width, height, resampling_filter)
+             if self.rotate_angle is not None:
+                 frame = frame.rotate(self.rotate_angle)
++            if self.convert_bits == 24:
++                frame = frame.convert_to_24_bits()
++            elif self.convert_bits == 32:
++                frame = frame.convert_to_32_bits()
++            if self.composite_args:
++                (use_file_bg, app_bg_color, bg) = self.composite_args
++                frame = frame.composite(use_file_bg, app_bg_color, bg)
+             self.frames[index] = frame
+         return self.frames[index]
+ 
+@@ -394,16 +403,30 @@ class AnimatedImage(object):
+         return self.frame_delay
+ 
+     def composite(self, use_file_bg=False, app_bg_color=None, bg=None):
+-        frames = [_[1] for frame in self.frames]
+-        return self.__class__(frames, self.delays[:])
++        frames = [None] * len(self.frames)
++        if self.frames[self.index] is not None:
++            frames[self.index] = self.frames[self.index].composite(use_file_bg, app_bg_color, bg)
++        img = self.__class__(frames, self.delays[:], self, composite_args=(use_file_bg, app_bg_color, bg))
++        img.index = self.index
++        return img
+ 
+     def convert_to_24_bits(self):
+-        frames = [_[1] for frame in self.frames]
+-        return self.__class__(frames, self.delays[:])
++        frames = [
++         None] * len(self.frames)
++        if self.frames[self.index] is not None:
++            frames[self.index] = self.frames[self.index].convert_to_24_bits()
++        img = self.__class__(frames, self.delays[:], self, convert_bits=24)
++        img.index = self.index
++        return img
+ 
+     def convert_to_32_bits(self):
+-        frames = [_[1] for frame in self.frames]
+-        return self.__class__(frames, self.delays[:])
++        frames = [
++         None] * len(self.frames)
++        if self.frames[self.index] is not None:
++            frames[self.index] = self.frames[self.index].convert_to_32_bits()
++        img = self.__class__(frames, self.delays[:], self, convert_bits=32)
++        img.index = self.index
++        return img
+ 
+     def rescale(self, width, height, resampling_filter):
+         frames = [

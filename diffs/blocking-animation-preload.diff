@@ -1,0 +1,125 @@
+Blocking animation preload before playback
+==========================================
+
+Date: 2026-07-02
+
+Purpose
+-------
+Avoid the first few seconds of dropped frames after the scaling-quality changes.
+
+The scaling options caused the active displayed animation to often be a scaled
+AnimatedImage wrapper. Those transformed frames were being preloaded in a
+background thread while the playback timer started immediately, so the first
+playback pass could compete with frame scaling/conversion.
+
+This change keeps the existing playback structure but waits for the active
+display image's animation frames to preload before starting the animation timer.
+
+Backups
+-------
+- backups/library.zip.before-blocking-animation-preload.20260702-014302.bak
+
+Changed files
+-------------
+- library.zip
+  - quivilib/control/canvas.pyc
+  - quivilib/model/image/freeimage.pyc
+  - pyfreeimage/image.pyc
+
+- .codex_tmp/test_blocking_animation_preload_python26.ps1
+  - Added a focused verification script for blocking scaled-frame preload.
+
+Source-level summary
+--------------------
+In quivilib/control/canvas.py:
+
+    img.preload_animation(block=True)
+
+In quivilib/model/image/freeimage.py:
+
+    def preload_animation(self, block=False):
+        ...
+        target = self.zoomed_bmp if self.zoomed_bmp else self.img
+        target.preload_frames(block)
+
+In pyfreeimage/image.py:
+
+    def preload_frames(self, block=False):
+        ...
+        if block:
+            preload()
+            return
+        t = threading.Thread(target=preload)
+        t.setDaemon(True)
+        t.start()
+
+Behavior change
+---------------
+- Animated playback startup now waits for the currently displayed frame set to
+  finish preloading.
+- This can add a deliberate short wait before animation starts, especially after
+  scaling or fit changes.
+- Once playback starts, it should avoid the first-pass frame drops caused by lazy
+  scaled-frame creation.
+- Existing background preload behavior remains available for callers that do not
+  pass block=True.
+
+Validation
+----------
+- python -m zipfile -t library.zip
+  Result: Done testing
+
+- .codex_tmp/test_gif_512_timing_python26.ps1
+  FRAMES=80
+  LOADED_SCALED=6
+  LOAD_SEC=1.755
+  RESCALE_CREATE_SEC=0.005
+  FIRST_FRAME_SEC=0.000
+  NEXT5_SEC=0.024
+  RC=0
+
+- .codex_tmp/test_animated_webp_pillow_helper_python26.ps1
+  FRAMES=49
+  SIZE=1264x720
+  DELAYS=63,62,63,62,63,62
+  LOAD_SEC=2.927
+  NEXT=62
+  RC=0
+
+- .codex_tmp/test_blocking_animation_preload_python26.ps1
+  FRAMES=80
+  LOADED=80
+  SETUP_SEC=1.281
+  BLOCK_PRELOAD_SEC=1.290
+  RC=0
+
+- Real quivi.exe smoke test with Python removed from PATH:
+  RUNNING=True after 12 seconds
+  %APPDATA%\Quivi\quivi.log length: 0
+  %APPDATA%\Quivi\error.log length: 0
+
+Hashes
+------
+- library.zip after:
+  SHA256: FA50829125E8FBF986C723AADEC4C47D31173AE8864D5D2E5561A9B507B9BDDE
+
+- library.zip backup:
+  SHA256: 2A15133E3B205565C50463BCCD237064BCA817462C4CFD240C01091DD87AD2A0
+
+- quivilib/control/canvas.pyc before:
+  SHA256: 25c8448e6edb30c9db7e75c4c200284434e169e7d0533fb25ee974daca902ab2
+
+- quivilib/control/canvas.pyc after:
+  SHA256: f5281996018df31587d678d9f63c8c0dcde1af48f910eff3f8e9289bdd3e15cf
+
+- quivilib/model/image/freeimage.pyc before:
+  SHA256: f4d6d590c03c4545803ba0c6287db5456f131d0d0f77b657423314b0796f176e
+
+- quivilib/model/image/freeimage.pyc after:
+  SHA256: 2f158cd2d1af2be300964fcd05b55cc7c35be587066030e53269ddba9bfc153a
+
+- pyfreeimage/image.pyc before:
+  SHA256: 84f5b2971163a1bc8f454d8174f55cba3b7245e4fd7a7eca4015fa3d7d8d90f3
+
+- pyfreeimage/image.pyc after:
+  SHA256: 52d5e5b9353f2195dea740d8d5fcbd09bdc7594267659448f26572cb8b283524

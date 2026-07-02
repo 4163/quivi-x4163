@@ -1,0 +1,286 @@
+Binary/source change: animated GIF support
+=========================================
+
+Purpose
+-------
+Add timer-driven animation support for GIF files loaded from the filesystem.
+FreeImage exposes GIF frames through OpenMultiBitmap, so this patch decodes
+GIF frames and their FrameTime metadata, then advances the displayed frame
+from a wx.Timer attached to the canvas panel.
+
+Changed file
+------------
+library.zip
+
+Backup
+------
+backups/library.zip.before-animated-gif-patch.bak
+
+Archive hashes
+--------------
+Old library.zip SHA256: 97D0E6D9C1B2B3CE1B54FC9E2A9770E3D46E14B2DD9021C340A018B272DDD878
+New library.zip SHA256: 28B4EA1E6C32B69282AA44E90CF58E16A1A55AA6F7355313D50D7201466D0D97
+
+Replaced entries
+----------------
+pyfreeimage/image.pyc
+  old SHA256: 18708E2207A649CCE0FFE8163A2B1CA16C8DE920AF603A5768D58CD14991D213
+  new SHA256: 4CF027857D13119870C8EB106019880DB9D9CB07CD7533501B83616EE96BFC24
+quivilib/control/canvas.pyc
+  old SHA256: CD77DDC9EBADBC40620F236C4DC6FE96B61BFB6ECBAFD140B970B68EEB4F8DDE
+  new SHA256: 1E295B209E83072A71BACAA9FA37BA16A6829BFBF2D9718A3ED938E78D0BA7DA
+quivilib/model/image/freeimage.pyc
+  old SHA256: 937102D3B8997A1642ACC248D9B569B411E95F907E6F7FE8056B41C9B954B9F0
+  new SHA256: C11D4AB5D61344875C8473557D6E4504CE1E8F8BC88BF6DEF63246B39250A5F1
+
+Verification
+------------
+quivi.exe sample-static.webp: stayed open 6 seconds, no new log entry.
+quivi.exe sample-animated.gif: stayed open 6 seconds, no new log entry.
+quivi.exe sample-animated.webp: stayed open 6 seconds, no new log entry.
+Python 2.6 direct decoder test: FRAMES=3, DELAYS=120,180,240, SIZE=16x12, NEXT=180.
+
+Known caveats
+-------------
+Animated GIF support currently applies to normal filesystem GIFs. GIFs inside
+archives still use the existing single-frame stream loader. Animated WebP still
+loads as a still image because FreeImage 3.18 reports only one WebP multi-page
+page for an animated WebP sample.
+
+Source-level diff of replaced modules
+-------------------------------------
+--- a/pyfreeimage/image.py
++++ b/pyfreeimage/image.py
+@@ -251,4 +251,101 @@
+         return
+ 
+ 
+-
++class AnimatedImage(object):
++
++    @classmethod
++    def load(cls, path, flags=0):
++        lib = library.load()
++        fif = lib.GetFIFFromFilename(path)
++        multi = None
++        frames = []
++        delays = []
++        try:
++            if fif == CO.FIF_UNKNOWN or not lib.FIFSupportsReading(fif):
++                raise RuntimeError('Unable to open animated image')
++            multi = lib.OpenMultiBitmap(fif, path, False, True, True, flags)
++            if not multi:
++                raise RuntimeError('Unable to open animated image')
++            count = lib.GetPageCount(multi)
++            if count <= 1:
++                raise RuntimeError('Image is not animated')
++            for idx in xrange(count):
++                page = lib.LockPage(multi, idx)
++                if not page:
++                    continue
++                try:
++                    delays.append(cls._get_frame_delay(lib, page))
++                    dib = lib.Clone(page)
++                    if not dib:
++                        raise RuntimeError('Unable to clone animation frame')
++                    frames.append(Image(dib))
++                finally:
++                    lib.UnlockPage(multi, page, False)
++        finally:
++            if multi:
++                lib.CloseMultiBitmap(multi, 0)
++        if not frames:
++            raise RuntimeError('Unable to load animation frames')
++        return cls(frames, delays)
++
++    @staticmethod
++    def _get_frame_delay(lib, dib):
++        tag = ctypes.c_void_p()
++        delay = 100
++        try:
++            ok = lib.GetMetadata(CO.FIMD_ANIMATION, dib, 'FrameTime', ctypes.byref(tag))
++            if ok and tag:
++                value = lib.GetTagValue(tag)
++                if value:
++                    delay = ctypes.cast(value, ctypes.POINTER(ctypes.c_uint)).contents.value
++        except Exception:
++            pass
++        if delay < 20:
++            delay = 100
++        return delay
++
++    def __init__(self, frames, delays):
++        self.frames = frames
++        self.delays = delays
++        self.index = 0
++        self.is_animated = True
++        return
++
++    @property
++    def current(self):
++        return self.frames[self.index]
++
++    @property
++    def frame_delay(self):
++        return self.delays[self.index]
++
++    def advance_frame(self):
++        self.index = (self.index + 1) % len(self.frames)
++        return self.frame_delay
++
++    def composite(self, use_file_bg=False, app_bg_color=None, bg=None):
++        frames = [frame.composite(use_file_bg, app_bg_color, bg) for frame in self.frames]
++        return self.__class__(frames, self.delays[:])
++
++    def convert_to_24_bits(self):
++        frames = [frame.convert_to_24_bits() for frame in self.frames]
++        return self.__class__(frames, self.delays[:])
++
++    def convert_to_32_bits(self):
++        frames = [frame.convert_to_32_bits() for frame in self.frames]
++        return self.__class__(frames, self.delays[:])
++
++    def rescale(self, width, height, resampling_filter):
++        frames = [frame.rescale(width, height, resampling_filter) for frame in self.frames]
++        img = self.__class__(frames, self.delays[:])
++        img.index = self.index
++        return img
++
++    def rotate(self, angle):
++        frames = [frame.rotate(angle) for frame in self.frames]
++        img = self.__class__(frames, self.delays[:])
++        img.index = self.index
++        return img
++
++    def __getattr__(self, name):
++        return getattr(self.current, name)
+
+--- a/quivilib/model/image/freeimage.py
++++ b/quivilib/model/image/freeimage.py
+@@ -4,7 +4,8 @@
+ from quivilib.util import rescale_by_size_factor
+ import pyfreeimage as fi
+ from pyfreeimage import Image
+-import wx, sys, logging
++from pyfreeimage.image import AnimatedImage
++import wx, sys, logging, os
+ log = logging.getLogger('freeimage')
+ 
+ class FreeImage(object):
+@@ -15,7 +16,14 @@
+         try:
+             if img is None:
+                 fi.library.load().reset_last_error()
+-                img = Image.load_from_file(f, path)
++                path_str = str(path) if path else ''
++                if path_str.lower().endswith('.gif') and os.path.isfile(path_str):
++                    try:
++                        img = AnimatedImage.load(path_str)
++                    except Exception:
++                        img = Image.load_from_file(f, path)
++                else:
++                    img = Image.load_from_file(f, path)
+                 try:
+                     if img.transparent:
+                         img = img.composite(True)
+@@ -35,6 +43,7 @@
+             self.original_width = self.width = img.width
+             self.original_height = self.height = img.height
+             self.img = img
++            self.is_animated = getattr(img, 'is_animated', False)
+             self.zoomed_bmp = None
+             self.rotation = 0
+         except Exception, e:
+@@ -81,6 +90,27 @@
+         height = int(self.original_height * factor)
+         self.resize(width, height)
+         return
++
++    @property
++    def frame_delay(self):
++        return getattr(self.img, 'frame_delay', 100)
++
++    def advance_frame(self):
++        if not self.is_animated:
++            return 0
++        delay = self.img.advance_frame()
++        if self.zoomed_bmp:
++            img = self.img.rescale(self.width, self.height, fi.FILTER_BICUBIC)
++            if sys.platform != 'win32':
++                if self.delay:
++                    self.zoomed_bmp = img
++                else:
++                    self.zoomed_bmp = img.convert_to_wx_bitmap(wx)
++            else:
++                self.zoomed_bmp = img
++        elif sys.platform != 'win32' and not self.delay:
++            self.bmp = self.img.convert_to_wx_bitmap(wx)
++        return delay
+ 
+     def rotate(self, clockwise):
+         self.rotation += 1 if clockwise else -1
+@@ -152,6 +182,3 @@
+ 
+     def close(self):
+         return
+-
+-
+-
+
+--- a/quivilib/control/canvas.py
++++ b/quivilib/control/canvas.py
+@@ -20,12 +20,46 @@
+         Publisher.subscribe(self.on_canvas_scrolled, '%s.scrolled' % self.name)
+         Publisher.subscribe(self.on_canvas_mouse_event, '%s.mouse.event' % self.name)
+         Publisher.subscribe(self.on_canvas_mouse_motion, '%s.mouse.motion' % self.name)
++        Publisher.subscribe(self.on_canvas_image_loaded, '%s.image.loaded' % self.name)
++        Publisher.subscribe(self.on_program_closed, 'program.closed')
++        self.animation_timer = wx.Timer(self.view.panel)
++        self.view.panel.Bind(wx.EVT_TIMER, self.on_animation_timer, self.animation_timer)
+         self._moving_image = False
+         self._moved_image = False
+         self._old_mouse_pos = (-1, -1)
+         self._default_cursor = wx.CursorFromImage(images.cursor_hand.GetImage())
+         self._moving_cursor = wx.CursorFromImage(images.cursor_drag.GetImage())
+         Publisher.sendMessage('%s.cursor.changed' % self.name, self._default_cursor)
++        return
++
++    def _stop_animation(self):
++        if self.animation_timer.IsRunning():
++            self.animation_timer.Stop()
++        return
++
++    def _start_animation(self):
++        self._stop_animation()
++        img = self.canvas.img
++        if img and getattr(img, 'is_animated', False):
++            self.animation_timer.Start(max(int(img.frame_delay), 20), True)
++        return
++
++    def on_canvas_image_loaded(self, message):
++        self._start_animation()
++        return
++
++    def on_program_closed(self, message):
++        self._stop_animation()
++        return
++
++    def on_animation_timer(self, event):
++        img = self.canvas.img
++        if not img or not getattr(img, 'is_animated', False):
++            self._stop_animation()
++            return
++        delay = img.advance_frame()
++        Publisher.sendMessage('%s.changed' % self.name, None)
++        self.animation_timer.Start(max(int(delay), 20), True)
+         return
+ 
+     def on_canvas_painted(self, message):
+@@ -152,6 +186,3 @@
+     def rotate_image(self, clockwise):
+         self.canvas.rotate(clockwise)
+         return
+-
+-
+-
+

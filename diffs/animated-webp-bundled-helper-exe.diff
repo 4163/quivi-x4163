@@ -1,0 +1,87 @@
+Animated WebP bundled helper exe diff
+Generated: 2026-07-02T00:19:00+08:00
+
+Changed artifacts:
+- library.zip
+- webp_extract_pillow.exe
+
+Old archive:
+- backups\library.zip.before-webp-helper-exe-preferred.20260702-001445.bak
+
+Archive hashes:
+old 12bff7d3d2a91e6fe1a5706ce714c53090ed5694aa679361d04c584480b2af99  backups\library.zip.before-webp-helper-exe-preferred.20260702-001445.bak
+new b819b4aa4cd9a140c8bf3909dc5751cf49e064b71721800464cd1691dd2795be  library.zip
+
+Entry hashes:
+old edb28fcf4e922a301ee2ff53171ea7409ffaa776af1f3a2355ae389ba0656cb2  pyfreeimage/image.pyc
+new b75fa2cc1090b69135b35024b94cd7232323b7a4573a3bb8a674c9b8bc181214  pyfreeimage/image.pyc
+
+New helper:
+sha256 829c14e81cdd83899e9935817e83abbe42a519ce54e3abf361dd2d7beb56ffb7  webp_extract_pillow.exe
+size   14306230 bytes
+
+Summary:
+- Added a self-contained no-console helper executable for animated WebP frame extraction.
+- Quivi now prefers webp_extract_pillow.exe from the application folder.
+- The old Python/Pillow script path remains as a development fallback only.
+- This removes the animated WebP dependency on a system-installed Python/Pillow setup for normal use.
+
+Build notes:
+- Built with PyInstaller from an isolated venv under .codex_tmp\webp_helper_venv.
+- The build was run outside the Quivi root to avoid importing Quivi's bundled 32-bit .pyd files into the Python 3.11 build interpreter.
+
+Verification:
+- Helper exe direct test with Python removed from PATH:
+  RC=0 FRAMES=49
+- Python 2.6 animated WebP loader test with Python removed from PATH:
+  FRAMES=49 SIZE=1264x720 DELAYS=63,62,63,62,63,62 LOAD_SEC=3.050
+  NEXT=62
+  RC=0
+  WRAPPER_RC=0
+- Quivi FreeImage wrapper test with Python removed from PATH:
+  CLASS=FreeImage ANIM=True SIZE=1264x720 DELAY=63
+  NEXT=62
+  RC=0
+  WRAPPER_RC=0
+- library.zip integrity: python -m zipfile -t library.zip -> Done testing
+- Real quivi.exe smoke with Python removed from PATH:
+  RUNNING Title=001_1_1.webp - Quivi
+  error.log remained 0 bytes
+
+Source-level diff:
+diff --git a/.codex_tmp/src/pyfreeimage/image.py b/.codex_tmp/src/pyfreeimage/image.py
+--- a/.codex_tmp/src/pyfreeimage/image.py
++++ b/.codex_tmp/src/pyfreeimage/image.py
+@@
+-        helper = os.path.abspath(os.path.join(os.getcwd(), 'webp_extract_pillow.py'))
+-        if not os.path.isfile(helper):
+-            raise RuntimeError('Animated WebP helper is missing')
++        helper_exe = os.path.abspath(os.path.join(os.getcwd(), 'webp_extract_pillow.exe'))
++        helper_script = os.path.abspath(os.path.join(os.getcwd(), 'webp_extract_pillow.py'))
++        helper_cmd = cls._get_webp_helper_command(helper_exe, helper_script)
+         out_dir = tempfile.mkdtemp(prefix='quivi_webp_')
+         try:
+             env = os.environ.copy()
+             env.pop('PYTHONHOME', None)
+             env.pop('PYTHONPATH', None)
+-            python_exe = cls._get_webp_helper_python()
+             popen_kwargs = cls._get_hidden_subprocess_kwargs()
+             popen_kwargs['env'] = env
+-            rc = subprocess.call([python_exe, helper, path, out_dir], **popen_kwargs)
++            rc = subprocess.call(helper_cmd + [path, out_dir], **popen_kwargs)
+             if rc:
+                 raise RuntimeError('Animated WebP helper failed')
+@@
+             except Exception:
+                 pass
+ 
++    @classmethod
++    def _get_webp_helper_command(cls, helper_exe, helper_script):
++        if os.path.isfile(helper_exe):
++            return [helper_exe]
++        if os.path.isfile(helper_script):
++            return [cls._get_webp_helper_python(), helper_script]
++        raise RuntimeError('Animated WebP helper is missing')
++
+     @staticmethod
+     def _get_webp_helper_python():

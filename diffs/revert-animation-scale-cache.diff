@@ -1,0 +1,65 @@
+Revert animated view/zoom scale cache
+=====================================
+
+Date: 2026-07-02
+
+Purpose
+-------
+Revert the animated scaled-view cache added in animation-scale-cache.diff.
+
+User testing showed the repeated lag after zoom/view/fit changes is tied to the
+selected scaling method, not playback state persistence. The issue does not
+appear with nearest-neighbor scaling, so caching scaled animation wrappers is not
+the right fix.
+
+Reverted change
+---------------
+- diffs/animation-scale-cache.diff
+
+Restore source
+--------------
+- library.zip was restored from:
+  backups/library.zip.before-animation-scale-cache.20260702-020005.bak
+
+- .codex_tmp/src/quivilib/model/image/freeimage.py was also reverted so future
+  rebuilds do not reintroduce the scale cache.
+
+Current state
+-------------
+- Blocking animation preload remains in place.
+- Waiting for an already-started preload remains in place.
+- Animated scale cache is removed.
+
+Validation
+----------
+- library.zip hash matches the pre-scale-cache backup:
+  SHA256: 02D586EBA9B6AB055EBE79091A6F2D891D655A416AF539170F3F512965ED0E0B
+
+- python -m zipfile -t library.zip
+  Result: Done testing
+
+- .codex_tmp/test_blocking_animation_preload_python26.ps1
+  FRAMES=80
+  LOADED=80
+  SETUP_SEC=1.777
+  BLOCK_PRELOAD_SEC=1.427
+  RC=0
+
+- .codex_tmp/test_animated_webp_pillow_helper_python26.ps1
+  FRAMES=49
+  SIZE=1264x720
+  DELAYS=63,62,63,62,63,62
+  LOAD_SEC=2.819
+  NEXT=62
+  RC=0
+
+- Real quivi.exe smoke test with Python removed from PATH:
+  RUNNING=True after 12 seconds
+  %APPDATA%\Quivi\quivi.log length: 0
+  %APPDATA%\Quivi\error.log length: 0
+
+Notes
+-----
+The next optimization target should be the animated scaling path itself. Since
+nearest-neighbor avoids the problem, the expensive path is likely FreeImage
+resampling for bicubic/lanczos over every animation frame.
