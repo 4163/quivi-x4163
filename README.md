@@ -1,4 +1,4 @@
-# Quivi Standalone WebP/GIF Support
+# Quivi WebP/GIF Support (Standalone)
 
 ## Quivi
 
