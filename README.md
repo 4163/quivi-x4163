@@ -5,7 +5,7 @@
 Quivi is an image viewer (specialized for comic/manga reading) which supports many file formats and compressed (zip, rar) files. It is aimed for fast & easy file browsing with keyboard or mouse.
 
 - Original project: [Quivi](http://quivi.sourceforge.net/)
-- Later continuation/fork: [qazmlpok/quivi](https://github.com/qazmlpok/quivi)
+- Later continuation/fork: [qazmlpok/quivi](https://github.com/qazmlpok/quivi) (used as reference to optimize playback methods)
 
 ## quivi-x4163
 
